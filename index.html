@@ -483,6 +483,45 @@ const icons={
 // HELPERS
 // ============================================================
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+
+// Debounced search to prevent full re-render on every keystroke
+let _searchTimeout;
+function debouncedSearch(key, value, delay=150) {
+    clearTimeout(_searchTimeout);
+    _searchTimeout = setTimeout(() => {
+        if(state.showExercisePicker) {
+            // Targeted DOM update: only replace the exercise list inside the picker modal
+            state[key] = value;
+            updatePickerResults();
+        } else {
+            setState({[key]: value});
+        }
+    }, delay);
+}
+
+// Targeted update for exercise picker results (avoids full re-render)
+function updatePickerResults() {
+    const container = document.getElementById('picker-results');
+    if(!container) return;
+    let filtered = getAllExercises();
+    if(state.libBodyFilter !== 'All') filtered = filtered.filter(e => e.body === state.libBodyFilter);
+    if(state.libEquipFilter !== 'All') filtered = filtered.filter(e => e.equip === state.libEquipFilter);
+    if(state.libSearch) filtered = filtered.filter(e => e.name.toLowerCase().includes(state.libSearch.toLowerCase()));
+    container.innerHTML = filtered.map(ex => `
+        <div class="exercise-item" onclick="pickExercise('${ex.id}')">
+            <div class="exercise-info"><div class="exercise-name">${ex.name}</div><div class="exercise-meta">${ex.body} · ${ex.equip}</div></div>
+            <span class="exercise-add">+</span>
+        </div>`).join('');
+}
+
+// Destroy Chart.js instances before re-render to prevent memory leaks
+function destroyCharts() {
+    const canvases = document.querySelectorAll('canvas');
+    canvases.forEach(c => {
+        const chart = Chart.getChart(c);
+        if(chart) chart.destroy();
+    });
+}
 const fmtDate=d=>{const dt=new Date(d);return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})};
 const fmtTime=s=>{const m=Math.floor(s/60);const sec=s%60;return `${m}:${sec.toString().padStart(2,'0')}`};
 const fmtDuration=s=>{const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}m`:`${m}m`};
@@ -533,6 +572,8 @@ function getSetsPerBodyPart(workouts){
 // ============================================================
 function render(){
   const app=document.getElementById('app');
+  // Destroy Chart.js instances before replacing DOM to prevent memory leaks
+  destroyCharts();
   // Preserve scroll position (#5 fix)
   const contentEl=document.getElementById('main-content');
   const scrollTop=contentEl?contentEl.scrollTop:0;
@@ -558,10 +599,16 @@ function render(){
   // Restore scroll position
   const newContent=document.getElementById('main-content');
   if(newContent)newContent.scrollTop=scrollTop;
-  // Restore focus
+  // Restore focus — set value BEFORE focus to prevent keyboard flicker on mobile
   if(focusId){
-    const el=document.querySelector(`[data-sid="${focusId}"]`);
-    if(el){el.focus();el.value=focusVal||'';if(focusSel!==null)try{el.setSelectionRange(focusSel,focusSel)}catch(e){}}
+    requestAnimationFrame(() => {
+      const el=document.querySelector(`[data-sid="${focusId}"]`);
+      if(el){
+        el.value=focusVal||'';
+        el.focus();
+        if(focusSel!==null)try{el.setSelectionRange(focusSel,focusSel)}catch(e){}
+      }
+    });
   }
   attachEvents();
 }
@@ -698,7 +745,7 @@ function renderLibraryTab(){
   if(state.libSearch)filtered=filtered.filter(e=>e.name.toLowerCase().includes(state.libSearch.toLowerCase()));
 
   return `
-    <div class="search-bar">${icons.search}<input type="text" placeholder="Search exercises..." value="${state.libSearch}" oninput="setState({libSearch:this.value})"></div>
+    <div class="search-bar">${icons.search}<input type="text" data-sid="lib-search" placeholder="Search exercises..." value="${state.libSearch}" oninput="debouncedSearch('libSearch',this.value)"></div>
     <div class="filter-row">${['All',...BODY_PARTS].map(bp=>`<button class="filter-chip ${state.libBodyFilter===bp?'active':''}" onclick="setState({libBodyFilter:'${bp}'})">${bp}</button>`).join('')}</div>
     <div class="filter-row">${['All',...EQUIPMENT].map(eq=>`<button class="filter-chip ${state.libEquipFilter===eq?'active':''}" onclick="setState({libEquipFilter:'${eq}'})">${eq}</button>`).join('')}</div>
     <div class="text-sm text-center mb-8" style="color:var(--text3)">${filtered.length} exercises</div>
@@ -1404,10 +1451,10 @@ function renderModals(){
     <div class="modal-overlay" onclick="closePicker(event)">
       <div class="modal" onclick="event.stopPropagation()">
         <div class="flex-between mb-12"><span class="modal-title" style="margin:0">Add Exercise</span><button style="font-size:24px;color:var(--text2)" onclick="setState({showExercisePicker:false})">×</button></div>
-        <div class="search-bar">${icons.search}<input type="text" placeholder="Search..." value="${state.libSearch}" oninput="setState({libSearch:this.value})"></div>
+        <div class="search-bar">${icons.search}<input type="text" data-sid="picker-search" placeholder="Search..." value="${state.libSearch}" oninput="debouncedSearch('libSearch',this.value)"></div>
         <div class="filter-row">${['All',...BODY_PARTS].map(bp=>`<button class="filter-chip ${state.libBodyFilter===bp?'active':''}" onclick="setState({libBodyFilter:'${bp}'})">${bp}</button>`).join('')}</div>
         <div class="filter-row">${['All',...EQUIPMENT].map(eq=>`<button class="filter-chip ${state.libEquipFilter===eq?'active':''}" onclick="setState({libEquipFilter:'${eq}'})">${eq}</button>`).join('')}</div>
-        <div style="max-height:50vh;overflow-y:auto">
+        <div id="picker-results" style="max-height:50vh;overflow-y:auto">
           ${filtered.map(ex=>`
             <div class="exercise-item" onclick="pickExercise('${ex.id}')">
               <div class="exercise-info"><div class="exercise-name">${ex.name}</div><div class="exercise-meta">${ex.body} · ${ex.equip}</div></div>
