@@ -9,6 +9,8 @@
 <link rel="manifest" href="manifest.json">
 <title>LiftinStuff</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
@@ -186,6 +188,33 @@ input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appear
 .badge-complete{position:absolute;top:12px;right:12px;background:var(--green);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:4px}
 .goal-form-group{margin-bottom:16px}
 .goal-form-group label{font-size:13px;color:var(--text2);margin-bottom:6px;display:block}
+
+.user-picker{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.user-picker h1{font-size:32px;font-weight:800;color:var(--green-bright)}
+.user-picker p{font-size:16px;color:var(--text2);margin-bottom:16px}
+.user-picker .pick-btn{width:200px;padding:18px;font-size:18px;font-weight:700;background:var(--green);color:#fff;border-radius:var(--radius);border:none;cursor:pointer}
+.user-picker .pick-btn:active{background:var(--green-dim)}
+
+.lb-table{width:100%;border-collapse:collapse}
+.lb-table th{font-size:11px;color:var(--text3);text-transform:uppercase;padding:8px 4px;text-align:center;letter-spacing:.5px}
+.lb-table td{font-size:15px;padding:8px 4px;text-align:center}
+.lb-table td:first-child{text-align:left;color:var(--text2);font-size:13px}
+.lb-leader{color:var(--green-bright);font-weight:700}
+
+.cardio-fields{display:flex;align-items:flex-end;gap:8px;flex:1}
+.cardio-field{display:flex;flex-direction:column;align-items:center;gap:2px}
+.cardio-field label{font-size:10px;font-weight:700;color:var(--text3);letter-spacing:.5px}
+.cardio-field input{width:60px;text-align:center;padding:8px 4px;font-size:16px;font-weight:600}
+
+.interval-fs{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:background .3s}
+.interval-fs .if-round{font-size:20px;font-weight:600;margin-bottom:16px}
+.interval-fs .if-time{font-size:84px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.interval-fs .if-label{font-size:28px;font-weight:700;margin-top:12px;text-transform:uppercase;letter-spacing:2px}
+.interval-fs .if-btn{margin-top:40px;padding:14px 40px;font-size:16px;font-weight:700;border-radius:var(--radius-sm);border:none;cursor:pointer}
+
+.interval-config .preset-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.interval-config .preset-btn{padding:10px 16px;border-radius:20px;font-size:13px;font-weight:600;background:var(--bg3);color:var(--text2);border:1px solid transparent;cursor:pointer}
+.interval-config .preset-btn.active{background:var(--green-dim);color:var(--green-bright);border-color:var(--green)}
 </style>
 </head>
 <body>
@@ -193,9 +222,42 @@ input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appear
 
 <script>
 // ============================================================
+// USER MANAGEMENT
+// ============================================================
+let currentUser=localStorage.getItem('liftinstuff_user');
+
+// ============================================================
+// FIREBASE CONFIG
+// ============================================================
+const firebaseConfig={
+  // Create a free Firebase project at https://console.firebase.google.com
+  // 1. Create project "liftinstuff"
+  // 2. Go to Project Settings > General > Your Apps > Add Web App
+  // 3. Copy the config values here
+  // 4. Go to Realtime Database > Create Database > Start in TEST MODE
+  apiKey:"REPLACE_WITH_YOUR_API_KEY",
+  authDomain:"REPLACE.firebaseapp.com",
+  databaseURL:"https://REPLACE-default-rtdb.firebaseio.com",
+  projectId:"REPLACE",
+  storageBucket:"REPLACE.appspot.com",
+  messagingSenderId:"REPLACE",
+  appId:"REPLACE"
+};
+let fbDb=null;
+function initFirebase(){
+  try{
+    if(firebaseConfig.apiKey&&!firebaseConfig.apiKey.startsWith('REPLACE')){
+      firebase.initializeApp(firebaseConfig);
+      fbDb=firebase.database();
+      listenToLeaderboard();
+    }
+  }catch(e){console.warn('Firebase not configured:',e)}
+}
+
+// ============================================================
 // DATABASE (IndexedDB)
 // ============================================================
-const DB_NAME='LiftinStuff';const DB_VER=2;
+let DB_NAME=currentUser?'LiftinStuff_'+currentUser:'LiftinStuff';const DB_VER=2;
 let db;
 function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('exercises'))d.createObjectStore('exercises',{keyPath:'id'});if(!d.objectStoreNames.contains('templates'))d.createObjectStore('templates',{keyPath:'id'});if(!d.objectStoreNames.contains('workouts'))d.createObjectStore('workouts',{keyPath:'id'});if(!d.objectStoreNames.contains('bodyweight'))d.createObjectStore('bodyweight',{keyPath:'date'});if(!d.objectStoreNames.contains('settings'))d.createObjectStore('settings',{keyPath:'key'});if(!d.objectStoreNames.contains('goals'))d.createObjectStore('goals',{keyPath:'id'})};r.onsuccess=e=>{db=e.target.result;res(db)};r.onerror=e=>rej(e)})}
 function dbPut(store,data){return new Promise((res,rej)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).put(data);tx.oncomplete=()=>res();tx.onerror=e=>rej(e)})}
@@ -425,7 +487,11 @@ let state={
   // workout session
   session:null, // {id,name,startTime,exercises:[{exerciseId,name,body,equip,sets:[{weight,reps,done}]}],currentExIdx:0}
   // timer
-  timerRunning:false,timerSeconds:0,timerInterval:null,
+  timerRunning:false,timerStartedAt:null,timerPausedAccumulated:0,timerTargetSeconds:0,timerInterval:null,
+  // leaderboard
+  leaderboardData:{},
+  // interval timer
+  intervalTimer:null,intervalTimerInterval:null,
   // filters
   libBodyFilter:'All',libEquipFilter:'All',libSearch:'',
   // templates
@@ -549,8 +615,55 @@ function getExercisePR(exerciseId){
 
 function calcVolume(workout){
   let total=0;
-  for(const ex of workout.exercises)for(const s of ex.sets)if(s.done)total+=s.weight*s.reps;
+  for(const ex of workout.exercises){
+    if(ex.isCardio)continue;
+    for(const s of ex.sets)if(s.done)total+=(s.weight||0)*(s.reps||0);
+  }
   return total;
+}
+
+function getTimerRemaining(){
+  if(!state.timerTargetSeconds)return 0;
+  const elapsed=state.timerPausedAccumulated+(state.timerRunning&&state.timerStartedAt?Date.now()-state.timerStartedAt:0);
+  return Math.max(0,Math.ceil((state.timerTargetSeconds*1000-elapsed)/1000));
+}
+
+function isStepExercise(name){return /stair|climber|step/i.test(name)}
+function isDistExercise(name){return /run|row|bike|cycle|elliptical|ski.?erg/i.test(name)}
+
+function getWeekId(){
+  const m=getMonday(new Date());
+  return m.toISOString().slice(0,10);
+}
+function getWeekStartStr(){
+  return getMonday(new Date()).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+
+function getCardioMinutes(workout){
+  let total=0;
+  for(const ex of workout.exercises){
+    const exData=getAllExercises().find(e=>e.id===ex.exerciseId);
+    if(exData&&exData.isCardio){
+      if(ex.sets&&ex.sets.length>0){
+        for(const s of ex.sets){if(s.done)total+=(s.reps||0)}
+      }else{
+        total+=(ex.durationMin||0);
+      }
+    }
+  }
+  return total;
+}
+
+function getStreak(){
+  if(state.workouts.length===0)return 0;
+  let streak=0;let d=new Date();
+  while(true){
+    const mon=getMonday(d);const end=new Date(mon);end.setDate(end.getDate()+7);
+    if(state.workouts.some(w=>{const wd=new Date(w.startTime);return wd>=mon&&wd<end})){
+      streak++;d.setDate(d.getDate()-7);
+    }else break;
+  }
+  return streak;
 }
 
 function getWeekWorkouts(){
@@ -584,9 +697,10 @@ function render(){
   const focusSel=focused?focused.selectionStart:null;
 
   let floatingTimer='';
-  if(state.subPage==='active-workout'&&(state.timerRunning||state.timerSeconds>0)){
+  const _timerRemaining=getTimerRemaining();
+  if(state.subPage==='active-workout'&&(state.timerRunning||_timerRemaining>0)){
     floatingTimer=`<div class="floating-timer">
-      <div class="ft-time">${fmtTime(state.timerSeconds)}</div>
+      <div class="ft-time">${fmtTime(_timerRemaining)}</div>
       <div class="ft-controls">
         <button class="btn btn-sm" style="padding:8px 14px" onclick="toggleTimer()">${state.timerRunning?'Pause':'Resume'}</button>
         <button class="btn btn-sm btn-outline" style="padding:8px 14px" onclick="resetTimer()">Stop</button>
@@ -635,10 +749,13 @@ function renderHeader(){
   if(state.subPage==='template-picker'){
     return `<div class="header"><button class="header-back" onclick="setState({subPage:null})">${icons.back}</button><h1>Pick Template</h1><div></div></div>`;
   }
-  if(state.subPage==='cardio-timer'){
-    return `<div class="header"><button class="header-back" onclick="stopCardioTimer();setState({subPage:'active-workout'})">${icons.back}</button><h1>4x4 Cardio</h1><div></div></div>`;
+  if(state.subPage==='interval-timer'){
+    const it=state.intervalTimer;
+    if(it&&(it.phase==='running'||it.phase==='paused'))return '';
+    return `<div class="header"><button class="header-back" onclick="cancelIntervalTimer()">${icons.back}</button><h1>Interval Timer</h1><div></div></div>`;
   }
-  const titles={workout:'LiftinStuff',library:'Exercise Library',templates:'Templates',goals:'Goals',stats:'Stats',history:'History'};
+  const _userName=currentUser?' · '+currentUser:'';
+  const titles={workout:'LiftinStuff'+_userName,library:'Exercise Library',templates:'Templates',goals:'Goals',stats:'Stats',history:'History'};
   let right='';
   if(state.tab==='workout')right=`<button class="header-btn" style="padding:8px" onclick="setState({subPage:'settings'})">${icons.gear}</button>`;
   return `<div class="header"><h1>${titles[state.tab]}</h1>${right}</div>`;
@@ -670,7 +787,7 @@ function renderPage(){
   if(state.subPage==='workout-detail')return renderWorkoutDetail();
   if(state.subPage==='edit-past-workout')return renderEditPastWorkout();
   if(state.subPage==='template-picker')return renderTemplatePicker();
-  if(state.subPage==='cardio-timer')return renderCardioTimer();
+  if(state.subPage==='interval-timer')return renderIntervalTimer();
   switch(state.tab){
     case 'workout':return renderWorkoutTab();
     case 'library':return renderLibraryTab();
@@ -713,6 +830,7 @@ function renderWorkoutTab(){
       <div class="stat-card"><div class="stat-value">${weekW.reduce((s,w)=>{const bw=state.bodyweights.length?[...state.bodyweights].sort((a,b)=>new Date(b.date)-new Date(a.date))[0].weight:180;return s+getSessionCalories(w,bw)},0)}</div><div class="stat-label">Est. Calories Burned</div></div>
       <div class="stat-card"><div class="stat-value">${weekW.reduce((s,w)=>s+w.exercises.reduce((ss,ex)=>ss+ex.sets.filter(st=>st.done).length,0),0)}</div><div class="stat-label">Total Sets</div></div>
     </div>
+    ${renderLeaderboard()}
     <button class="btn mb-12" onclick="beginWorkoutSetup(null)"><span style="font-size:20px">+</span> Start Empty Workout</button>
     <button class="btn btn-outline mb-16" onclick="setState({subPage:'template-picker'})">Start From Template</button>
     ${weekW.length>0?`<div class="card-title mb-8">Recent Workouts</div>${weekW.sort((a,b)=>new Date(b.startTime)-new Date(a.startTime)).slice(0,3).map(w=>`
@@ -1252,11 +1370,27 @@ function renderActiveWorkout(){
           <div class="we-last">Last: ${lastStr}</div>
           ${isCardio?`
             <div class="mb-8">
-              ${ex.name.includes('4x4')?`<button class="btn mb-8" onclick="event.stopPropagation();startCardioTimer()" style="background:var(--green-dim);border:1px solid var(--green)">Launch 4x4 Interval Timer</button>`:''}
-              <div class="set-row"><div class="set-label" style="flex:1">Duration (min)</div><div style="width:36px"></div></div>
+              <button class="btn mb-8" onclick="event.stopPropagation();openIntervalTimer(${i})" style="background:var(--green-dim);border:1px solid var(--green)">Start Interval Timer</button>
               <div class="set-row">
-                <input class="set-input" data-sid="cardio-${i}" style="width:120px" type="number" inputmode="numeric" value="${ex.durationMin||''}" placeholder="30" onchange="updateCardioDuration(${i},this.value)">
-                <button class="set-check ${ex._cardioDone?'done':''}" onclick="event.stopPropagation();toggleCardioDone(${i})">${ex._cardioDone?icons.check:''}</button>
+                <div class="set-num">#</div>
+                <div class="set-label" style="width:60px">MIN</div>
+                ${isStepExercise(ex.name)?'<div class="set-label" style="width:60px">SPM</div>':''}
+                ${isDistExercise(ex.name)?'<div class="set-label" style="width:60px">DIST</div>':''}
+                <div class="set-label" style="width:60px">CAL</div>
+                <div style="width:36px"></div>
+              </div>
+              ${(ex.sets||[]).map((set,si)=>`
+                <div class="set-row">
+                  <div class="set-num">${si+1}</div>
+                  <input class="set-input" style="width:60px" data-sid="cm-${i}-${si}" type="number" inputmode="numeric" value="${set.reps||''}" placeholder="0" onchange="updateSet(${i},${si},'reps',this.value)">
+                  ${isStepExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cs-${i}-${si}" type="number" inputmode="numeric" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  ${isDistExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cd-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  <input class="set-input" style="width:60px" data-sid="cc-${i}-${si}" type="number" inputmode="numeric" value="${set.calories||''}" placeholder="0" onchange="updateSet(${i},${si},'calories',this.value)">
+                  <button class="set-check ${set.done?'done':''}" onclick="event.stopPropagation();toggleSet(${i},${si})">${set.done?icons.check:''}</button>
+                </div>`).join('')}
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="btn btn-sm btn-outline" style="flex:1" onclick="event.stopPropagation();addSetToExercise(${i})">+ Set</button>
+                ${(ex.sets||[]).length>1?`<button class="btn btn-sm" style="width:auto;background:var(--bg4)" onclick="event.stopPropagation();removeLastSet(${i})">- Set</button>`:''}
               </div>
             </div>
           `:`
@@ -1286,6 +1420,7 @@ function setActiveEx(i){state.session.currentExIdx=i;render()}
 function removeExFromSession(idx){
   state.session.exercises.splice(idx,1);
   if(state.session.currentExIdx>=state.session.exercises.length)state.session.currentExIdx=Math.max(0,state.session.exercises.length-1);
+  saveSession();
   render();
 }
 
@@ -1347,7 +1482,12 @@ function renderSettings(){
       <button class="btn btn-outline mb-8" onclick="exportData()">Export All Data (JSON)</button>
       <label class="btn btn-outline" style="cursor:pointer">Import Data<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>
     </div>
-    <div class="card"><div class="text-center text-sm" style="color:var(--text3)">LiftinStuff v1.0<br>All data stored locally on your device</div></div>
+    <div class="card">
+      <div class="card-title mb-8">Account</div>
+      <div class="text-sm mb-8" style="color:var(--text2)">Logged in as: <span class="fw-700 text-green">${currentUser||'Unknown'}</span></div>
+      <button class="btn btn-outline" onclick="switchUser()">Switch User</button>
+    </div>
+    <div class="card"><div class="text-center text-sm" style="color:var(--text3)">LiftinStuff v2.0<br>Workout data stored locally · Leaderboard synced via Firebase</div></div>
   `;
 }
 
@@ -1372,7 +1512,8 @@ function renderWorkoutDetail(){
     ${w.exercises.map(ex=>{
       const pr=getExercisePR(ex.exerciseId);
       if(ex.isCardio){
-        return `<div class="card"><div class="card-title">${ex.name}</div><div class="text-xs mb-4" style="color:var(--text2)">${ex.body} · ${ex.equip}</div><div class="fw-700 text-green">${ex.durationMin||0} min</div></div>`;
+        const cdMins=ex.sets&&ex.sets.length>0&&ex.sets.some(s=>s.done)?ex.sets.filter(s=>s.done).reduce((t,s)=>t+(s.reps||0),0):(ex.durationMin||0);
+        return `<div class="card"><div class="card-title">${ex.name}</div><div class="text-xs mb-4" style="color:var(--text2)">${ex.body} · ${ex.equip}</div><div class="fw-700 text-green">${cdMins} min</div></div>`;
       }
       return `<div class="card">
         <div class="card-title">${ex.name}</div>
@@ -1411,7 +1552,15 @@ function renderEditPastWorkout(){
       <div class="card">
         <div class="flex-between mb-8"><span class="fw-700">${ex.name}</span><button style="color:var(--red);padding:4px" onclick="state._editWorkout.exercises.splice(${i},1);render()">×</button></div>
         ${ex.isCardio?`
-          <div class="set-row"><span class="text-sm">Duration (min)</span><input class="set-input" data-sid="epw-cd-${i}" type="number" value="${ex.durationMin||''}" inputmode="numeric" onchange="state._editWorkout.exercises[${i}].durationMin=parseInt(this.value)||0"></div>
+          ${ex.sets&&ex.sets.length>0?ex.sets.map((s,si)=>`
+            <div class="set-row">
+              <div class="set-num">${si+1}</div>
+              <div class="cardio-field"><label>MIN</label><input class="set-input" style="width:60px" data-sid="epw-cm-${i}-${si}" type="number" inputmode="numeric" value="${s.reps||''}" onchange="state._editWorkout.exercises[${i}].sets[${si}].reps=parseInt(this.value)||0"></div>
+              <div class="cardio-field"><label>CAL</label><input class="set-input" style="width:60px" data-sid="epw-cc-${i}-${si}" type="number" inputmode="numeric" value="${s.calories||''}" onchange="state._editWorkout.exercises[${i}].sets[${si}].calories=parseInt(this.value)||0"></div>
+              <button class="set-check ${s.done?'done':''}" onclick="state._editWorkout.exercises[${i}].sets[${si}].done=!state._editWorkout.exercises[${i}].sets[${si}].done;render()">${s.done?icons.check:''}</button>
+            </div>`).join(''):`
+            <div class="set-row"><span class="text-sm">Duration (min)</span><input class="set-input" data-sid="epw-cd-${i}" type="number" value="${ex.durationMin||''}" inputmode="numeric" onchange="state._editWorkout.exercises[${i}].durationMin=parseInt(this.value)||0"></div>
+          `}
         `:`
           ${ex.sets.map((s,si)=>`
             <div class="set-row">
@@ -1506,7 +1655,9 @@ function estimateCalories(exercise,bodyWeightLbs){
   const bwKg=(bodyWeightLbs||180)*0.4536;
   if(exercise.isCardio){
     const met=CARDIO_METS[exercise.name]||7;
-    const mins=exercise.durationMin||exercise.sets?.reduce((s,st)=>s+(st.done?2:0),0)*2||10;
+    let mins=0;
+    if(exercise.sets&&exercise.sets.length>0)mins=exercise.sets.reduce((s,st)=>s+(st.done?(st.reps||0):0),0);
+    if(mins===0)mins=exercise.durationMin||10;
     return Math.round(met*bwKg*(mins/60));
   }
   // Strength: ~5 MET, estimate ~40s per set
@@ -1551,7 +1702,7 @@ function beginWorkoutSetup(tid){
       exercises:t.exercises.map(ex=>({
         exerciseId:ex.exerciseId,name:ex.name,body:ex.body,equip:ex.equip,
         isCardio:ex.isCardio||false,durationMin:ex.durationMin||0,
-        sets:ex.isCardio?[]:(ex.sets||[]).map(s=>({weight:s.weight||0,reps:s.reps||0,done:false}))
+        sets:ex.isCardio?[{reps:0,weight:0,calories:0,done:false}]:(ex.sets||[]).map(s=>({weight:s.weight||0,reps:s.reps||0,done:false}))
       }))
     };
   }else{
@@ -1590,6 +1741,7 @@ function launchWorkout(){
   state.session={id:uid(),name:w.name,startTime:new Date().toISOString(),exercises:w.exercises,currentExIdx:0};
   state._setupWorkout=null;
   state.subPage='active-workout';
+  saveSession();
   render();
 }
 
@@ -1610,111 +1762,225 @@ function renderTemplatePicker(){
 }
 
 // ============================================================
-// 4x4 CARDIO INTERVAL TIMER
+// INTERVAL TIMER
 // ============================================================
-const CARDIO_PHASES=[
-  {name:'Warm Up',duration:300,hr:'Easy pace'},
-  {name:'Interval 1 — Push',duration:240,hr:'165-175 bpm'},
-  {name:'Interval 1 — Recover',duration:180,hr:'115 bpm'},
-  {name:'Interval 2 — Push',duration:240,hr:'165-175 bpm'},
-  {name:'Interval 2 — Recover',duration:180,hr:'115 bpm'},
-  {name:'Interval 3 — Push',duration:240,hr:'165-175 bpm'},
-  {name:'Interval 3 — Recover',duration:180,hr:'115 bpm'},
-  {name:'Interval 4 — Push',duration:240,hr:'165-175 bpm'},
-  {name:'Interval 4 — Recover',duration:180,hr:'115 bpm'},
-  {name:'Cool Down',duration:300,hr:'Easy pace'},
-];
+const INTERVAL_PRESETS={
+  '4x4':{activeSeconds:240,restSeconds:180,rounds:4,label:'4x4'},
+  '30/30':{activeSeconds:30,restSeconds:30,rounds:10,label:'30/30'},
+  'tabata':{activeSeconds:20,restSeconds:10,rounds:8,label:'Tabata'},
+};
 
-function startCardioTimer(){
-  state._cardioPhase=0;
-  state._cardioSecs=CARDIO_PHASES[0].duration;
-  state._cardioRunning=true;
-  state._cardioTotalElapsed=0;
-  state.subPage='cardio-timer';
-  clearInterval(state._cardioInterval);
-  state._cardioInterval=setInterval(()=>{
-    state._cardioTotalElapsed++;
-    if(state._cardioSecs>0){
-      state._cardioSecs--;
-      // DOM-only update
-      const tEl=document.getElementById('cardio-time');if(tEl)tEl.textContent=fmtTime(state._cardioSecs);
-      const totEl=document.getElementById('cardio-total');if(totEl)totEl.textContent=fmtTime(state._cardioTotalElapsed);
-      const progEl=document.getElementById('cardio-prog');
-      if(progEl){const phase=CARDIO_PHASES[state._cardioPhase];progEl.style.width=((1-state._cardioSecs/phase.duration)*100)+'%'}
-    }else{
-      // Advance to next phase
-      if(state._cardioPhase<CARDIO_PHASES.length-1){
-        state._cardioPhase++;
-        state._cardioSecs=CARDIO_PHASES[state._cardioPhase].duration;
-        if('vibrate' in navigator)navigator.vibrate([300,100,300]);
-        render();
-      }else{
-        clearInterval(state._cardioInterval);state._cardioRunning=false;
-        if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
-        render();
-      }
-    }
-  },1000);
+function openIntervalTimer(exIdx){
+  state.intervalTimer={
+    activeSeconds:240,restSeconds:180,rounds:4,
+    phase:'config',currentPhase:'active',currentRound:1,
+    phaseStartedAt:null,phasePausedAccum:0,
+    completedActiveTime:0,completedRestTime:0,
+    exerciseIdx:exIdx,preset:'4x4'
+  };
+  state.subPage='interval-timer';
   render();
 }
 
-function stopCardioTimer(){
-  clearInterval(state._cardioInterval);state._cardioRunning=false;
+function cancelIntervalTimer(){
+  clearInterval(state.intervalTimerInterval);
+  state.intervalTimer=null;
+  state.subPage='active-workout';
+  saveSession();
+  render();
 }
 
-function renderCardioTimer(){
-  const phase=CARDIO_PHASES[state._cardioPhase||0];
-  const isPush=phase.name.includes('Push');
-  const isRecover=phase.name.includes('Recover');
-  const totalTime=CARDIO_PHASES.reduce((s,p)=>s+p.duration,0);
-  const elapsed=state._cardioTotalElapsed||0;
-  return `
-    <div style="text-align:center;padding-top:20px">
-      <div class="text-xs mb-4" style="color:var(--text3)">TOTAL: <span id="cardio-total">${fmtTime(elapsed)}</span> / ${fmtTime(totalTime)}</div>
-      <div style="font-size:14px;font-weight:700;color:${isPush?'var(--red)':isRecover?'var(--green-bright)':'var(--text2)'};margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">${phase.name}</div>
-      <div style="font-size:72px;font-weight:800;font-variant-numeric:tabular-nums;color:${isPush?'var(--red)':'var(--green-bright)'};padding:16px 0" id="cardio-time">${fmtTime(state._cardioSecs||0)}</div>
-      <div style="font-size:16px;color:var(--text2);margin-bottom:24px">Target: ${phase.hr}</div>
-      <div style="background:var(--bg3);border-radius:8px;height:8px;margin:0 20px 24px;overflow:hidden">
-        <div id="cardio-prog" style="height:100%;background:${isPush?'var(--red)':'var(--green-bright)'};border-radius:8px;transition:width .3s;width:${((1-(state._cardioSecs||0)/phase.duration)*100)}%"></div>
+function applyIntervalPreset(key){
+  if(!state.intervalTimer)return;
+  if(key==='custom'){
+    state.intervalTimer.preset='custom';
+  }else{
+    const p=INTERVAL_PRESETS[key];
+    state.intervalTimer.activeSeconds=p.activeSeconds;
+    state.intervalTimer.restSeconds=p.restSeconds;
+    state.intervalTimer.rounds=p.rounds;
+    state.intervalTimer.preset=key;
+  }
+  render();
+}
+
+function startIntervalTimer(){
+  const it=state.intervalTimer;if(!it)return;
+  it.phase='running';it.currentPhase='active';it.currentRound=1;
+  it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
+  it.completedActiveTime=0;it.completedRestTime=0;
+  clearInterval(state.intervalTimerInterval);
+  state.intervalTimerInterval=setInterval(intervalTimerTick,200);
+  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  saveSession();
+  render();
+}
+
+function getIntervalPhaseRemaining(){
+  const it=state.intervalTimer;if(!it||it.phase==='config'||it.phase==='done')return 0;
+  const phaseDur=it.currentPhase==='active'?it.activeSeconds:it.restSeconds;
+  const elapsed=it.phasePausedAccum+(it.phase==='running'&&it.phaseStartedAt?Date.now()-it.phaseStartedAt:0);
+  return Math.max(0,Math.ceil((phaseDur*1000-elapsed)/1000));
+}
+
+function intervalTimerTick(){
+  const it=state.intervalTimer;if(!it||it.phase!=='running')return;
+  const remaining=getIntervalPhaseRemaining();
+  if(remaining<=0){
+    // Phase complete
+    if(it.currentPhase==='active'){
+      it.completedActiveTime+=it.activeSeconds;
+      if(it.restSeconds>0){
+        it.currentPhase='rest';
+        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
+        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+        saveSession();render();
+      }else{
+        // No rest, go to next round or done
+        if(it.currentRound<it.rounds){
+          it.currentRound++;it.currentPhase='active';
+          it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
+          if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+          saveSession();render();
+        }else{
+          completeIntervalTimer();
+        }
+      }
+    }else{
+      it.completedRestTime+=it.restSeconds;
+      if(it.currentRound<it.rounds){
+        it.currentRound++;it.currentPhase='active';
+        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
+        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+        saveSession();render();
+      }else{
+        completeIntervalTimer();
+      }
+    }
+  }else{
+    // Update DOM directly
+    const tEl=document.getElementById('interval-time');
+    if(tEl)tEl.textContent=fmtTime(remaining);
+  }
+}
+
+function pauseIntervalTimer(){
+  const it=state.intervalTimer;if(!it||it.phase!=='running')return;
+  it.phasePausedAccum+=Date.now()-it.phaseStartedAt;
+  it.phaseStartedAt=null;
+  it.phase='paused';
+  clearInterval(state.intervalTimerInterval);
+  saveSession();render();
+}
+
+function resumeIntervalTimer(){
+  const it=state.intervalTimer;if(!it||it.phase!=='paused')return;
+  it.phaseStartedAt=Date.now();
+  it.phase='running';
+  state.intervalTimerInterval=setInterval(intervalTimerTick,200);
+  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  saveSession();render();
+}
+
+function completeIntervalTimer(){
+  const it=state.intervalTimer;if(!it)return;
+  clearInterval(state.intervalTimerInterval);
+  it.phase='done';
+  if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
+  // Auto-fill cardio exercise MIN field
+  if(it.exerciseIdx!=null&&state.session&&state.session.exercises[it.exerciseIdx]){
+    const ex=state.session.exercises[it.exerciseIdx];
+    const activeMins=Math.round(it.completedActiveTime/60);
+    if(ex.sets&&ex.sets.length>0){
+      ex.sets[0].reps=activeMins;
+      ex.sets[0].done=true;
+    }
+  }
+  saveSession();render();
+}
+
+function endIntervalTimerAndReturn(){
+  clearInterval(state.intervalTimerInterval);
+  state.intervalTimer=null;
+  state.subPage='active-workout';
+  saveSession();render();
+}
+
+function renderIntervalTimer(){
+  const it=state.intervalTimer;
+  if(!it)return '<p>No timer configured</p>';
+
+  // CONFIG screen
+  if(it.phase==='config'){
+    return `<div class="interval-config">
+      <div class="card">
+        <div class="card-title mb-12">Active Period</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="number" data-sid="it-active-m" value="${Math.floor(it.activeSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.activeSeconds=parseInt(this.value)*60+(state.intervalTimer.activeSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
+          <input type="number" data-sid="it-active-s" value="${it.activeSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.activeSeconds=Math.floor(state.intervalTimer.activeSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
+        </div>
       </div>
-      <div style="display:flex;gap:4px;justify-content:center;margin-bottom:24px">${CARDIO_PHASES.map((p,pi)=>`<div style="width:${p.duration/totalTime*100}%;height:6px;border-radius:3px;background:${pi<(state._cardioPhase||0)?'var(--green)':pi===(state._cardioPhase||0)?'var(--green-bright)':'var(--bg4)'}"></div>`).join('')}</div>
-      ${state._cardioRunning?`
-        <button class="btn" onclick="stopCardioTimer();render()" style="max-width:200px;margin:0 auto">Pause</button>
-      `:`
-        ${state._cardioPhase>=CARDIO_PHASES.length-1&&state._cardioSecs===0?`
-          <div class="fw-700 text-green mb-12" style="font-size:20px">Complete!</div>
-          <button class="btn" onclick="stopCardioTimer();setState({subPage:'active-workout'})" style="max-width:200px;margin:0 auto">Back to Workout</button>
-        `:`
-          <button class="btn" onclick="resumeCardioTimer()" style="max-width:200px;margin:0 auto">Resume</button>
-        `}
-      `}
-    </div>
-  `;
-}
+      <div class="card">
+        <div class="card-title mb-12">Rest Period</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="number" data-sid="it-rest-m" value="${Math.floor(it.restSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=parseInt(this.value)*60+(state.intervalTimer.restSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
+          <input type="number" data-sid="it-rest-s" value="${it.restSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=Math.floor(state.intervalTimer.restSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title mb-12">Rounds</div>
+        <input type="number" data-sid="it-rounds" value="${it.rounds}" style="width:80px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.rounds=parseInt(this.value)||1;state.intervalTimer.preset='custom'">
+      </div>
+      <div class="card-title mb-8">Presets</div>
+      <div class="preset-row">
+        <button class="preset-btn ${it.preset==='4x4'?'active':''}" onclick="applyIntervalPreset('4x4')">4x4</button>
+        <button class="preset-btn ${it.preset==='30/30'?'active':''}" onclick="applyIntervalPreset('30/30')">30/30</button>
+        <button class="preset-btn ${it.preset==='tabata'?'active':''}" onclick="applyIntervalPreset('tabata')">Tabata</button>
+        <button class="preset-btn ${it.preset==='custom'?'active':''}" onclick="applyIntervalPreset('custom')">Custom</button>
+      </div>
+      <button class="btn mt-16" style="font-size:18px;padding:16px" onclick="startIntervalTimer()">START</button>
+    </div>`;
+  }
 
-function resumeCardioTimer(){
-  state._cardioRunning=true;
-  state._cardioInterval=setInterval(()=>{
-    state._cardioTotalElapsed++;
-    if(state._cardioSecs>0){
-      state._cardioSecs--;
-      const tEl=document.getElementById('cardio-time');if(tEl)tEl.textContent=fmtTime(state._cardioSecs);
-      const totEl=document.getElementById('cardio-total');if(totEl)totEl.textContent=fmtTime(state._cardioTotalElapsed);
-      const progEl=document.getElementById('cardio-prog');
-      if(progEl){const phase=CARDIO_PHASES[state._cardioPhase];progEl.style.width=((1-state._cardioSecs/phase.duration)*100)+'%'}
-    }else{
-      if(state._cardioPhase<CARDIO_PHASES.length-1){
-        state._cardioPhase++;state._cardioSecs=CARDIO_PHASES[state._cardioPhase].duration;
-        if('vibrate' in navigator)navigator.vibrate([300,100,300]);
-        render();
-      }else{
-        clearInterval(state._cardioInterval);state._cardioRunning=false;
-        if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
-        render();
-      }
-    }
-  },1000);
-  render();
+  // DONE screen
+  if(it.phase==='done'){
+    const totalActive=it.completedActiveTime;
+    const totalRest=it.completedRestTime;
+    const totalTime=totalActive+totalRest;
+    return `<div class="interval-fs" style="background:var(--bg)">
+      <div style="font-size:32px;font-weight:800;color:var(--green-bright);margin-bottom:24px">DONE!</div>
+      <div class="text-sm mb-8" style="color:var(--text2)">${it.rounds} rounds completed</div>
+      <div class="fw-700 mb-4" style="font-size:20px">${fmtTime(totalTime)} total time</div>
+      <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} active / ${fmtTime(totalRest)} rest</div>
+      <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">Save & Return to Workout</button>
+    </div>`;
+  }
+
+  // RUNNING / PAUSED screen (fullscreen)
+  const isActive=it.currentPhase==='active';
+  const isPaused=it.phase==='paused';
+  const remaining=getIntervalPhaseRemaining();
+  const bgColor=isPaused?'var(--bg2)':isActive?'#52b788':'#0a0f0a';
+  const textColor=isPaused?'var(--text)':isActive?'#000':'#52b788';
+
+  if(isPaused){
+    return `<div class="interval-fs" style="background:${bgColor}">
+      <div class="if-round" style="color:var(--text2)">ROUND ${it.currentRound}/${it.rounds}</div>
+      <div class="if-time" style="color:var(--text)">${fmtTime(remaining)}</div>
+      <div class="if-label" style="color:var(--text2)">PAUSED</div>
+      <div style="display:flex;gap:12px;margin-top:40px">
+        <button class="if-btn" style="background:var(--green);color:#fff" onclick="resumeIntervalTimer()">Resume</button>
+        <button class="if-btn" style="background:var(--red);color:#fff" onclick="endIntervalTimerAndReturn()">End Timer</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="interval-fs" style="background:${bgColor}">
+    <div class="if-round" style="color:${textColor}">${isActive?'ROUND':'REST'} ${it.currentRound}/${it.rounds}</div>
+    <div class="if-time" style="color:${textColor}" id="interval-time">${fmtTime(remaining)}</div>
+    <div class="if-label" style="color:${textColor}">${isActive?'GO':'REST'}</div>
+    <button class="if-btn" style="background:${isActive?'rgba(0,0,0,.2)':'rgba(255,255,255,.1)'};color:${textColor}" onclick="pauseIntervalTimer()">PAUSE</button>
+  </div>`;
 }
 
 function addExerciseToSession(){
@@ -1735,16 +2001,17 @@ function pickExercise(exId){
   const ex=getAllExercises().find(e=>e.id===exId);
   if(!ex)return;
   const newEx=ex.isCardio
-    ?{exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,isCardio:true,durationMin:0,sets:[]}
+    ?{exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,isCardio:true,sets:[{reps:0,weight:0,calories:0,done:false}]}
     :{exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,sets:[{weight:0,reps:0,done:false},{weight:0,reps:0,done:false},{weight:0,reps:0,done:false}]};
 
   if(state.pickerCallback==='session'){
     state.session.exercises.push(newEx);
+    saveSession();
   } else if(state.pickerCallback==='setup'){
     state._setupWorkout.exercises.push(newEx);
   } else if(state.pickerCallback==='template'){
     if(ex.isCardio){
-      state.editTemplate.exercises.push({exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,isCardio:true,durationMin:0,sets:[]});
+      state.editTemplate.exercises.push({exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,isCardio:true,sets:[{reps:0,weight:0,calories:0}]});
     }else{
       state.editTemplate.exercises.push({exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,sets:[{weight:0,reps:0},{weight:0,reps:0},{weight:0,reps:0}]});
     }
@@ -1755,66 +2022,69 @@ function pickExercise(exId){
 
 function closePicker(e){if(e.target.classList.contains('modal-overlay'))setState({showExercisePicker:false})}
 
-// Cardio duration
-function updateCardioDuration(exIdx,val){
-  state.session.exercises[exIdx].durationMin=parseInt(val)||0;
-}
-
-function toggleCardioDone(exIdx){
-  const ex=state.session.exercises[exIdx];
-  ex._cardioDone=!ex._cardioDone;
-  if(ex._cardioDone&&exIdx<state.session.exercises.length-1)state.session.currentExIdx=exIdx+1;
-  render();
-}
+// (cardio duration now handled via set-based UI)
 
 function updateSet(exIdx,setIdx,field,value){
   state.session.exercises[exIdx].sets[setIdx][field]=parseFloat(value)||0;
+  saveSession();
 }
 
 function toggleSet(exIdx,setIdx){
   const set=state.session.exercises[exIdx].sets[setIdx];
   set.done=!set.done;
   if(set.done){
-    // Auto start rest timer
-    // Check if we should auto-advance
     const ex=state.session.exercises[exIdx];
     const allDone=ex.sets.every(s=>s.done);
     if(allDone&&exIdx<state.session.exercises.length-1){
       state.session.currentExIdx=exIdx+1;
     }
   }
+  saveSession();
   render();
 }
 
 function addSetToExercise(exIdx){
-  const lastSet=state.session.exercises[exIdx].sets[state.session.exercises[exIdx].sets.length-1];
-  state.session.exercises[exIdx].sets.push({weight:lastSet.weight||0,reps:lastSet.reps||0,done:false});
+  const ex=state.session.exercises[exIdx];
+  const lastSet=ex.sets[ex.sets.length-1];
+  if(ex.isCardio){
+    ex.sets.push({reps:lastSet?.reps||0,weight:lastSet?.weight||0,calories:lastSet?.calories||0,done:false});
+  }else{
+    ex.sets.push({weight:lastSet?.weight||0,reps:lastSet?.reps||0,done:false});
+  }
+  saveSession();
   render();
 }
 
 function removeLastSet(exIdx){
   if(state.session.exercises[exIdx].sets.length>1)state.session.exercises[exIdx].sets.pop();
+  saveSession();
   render();
 }
 
 
+function timerTick(){
+  const remaining=getTimerRemaining();
+  if(remaining<=0){
+    clearInterval(state.timerInterval);state.timerRunning=false;
+    state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+    if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+    saveSession();
+    render();
+  }else{
+    const ftEl=document.querySelector('.ft-time');
+    if(ftEl)ftEl.textContent=fmtTime(remaining);
+  }
+}
+
 function startRestTimerWith(secs){
   state._selectedRest=secs;
-  state.timerSeconds=secs;
+  state.timerTargetSeconds=secs;
+  state.timerStartedAt=Date.now();
+  state.timerPausedAccumulated=0;
   state.timerRunning=true;
   clearInterval(state.timerInterval);
-  state.timerInterval=setInterval(()=>{
-    if(state.timerSeconds>0){
-      state.timerSeconds--;
-      // Update floating timer DOM directly instead of full re-render
-      const ftEl=document.querySelector('.ft-time');
-      if(ftEl)ftEl.textContent=fmtTime(state.timerSeconds);
-    }else{
-      clearInterval(state.timerInterval);state.timerRunning=false;
-      if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-      render();
-    }
-  },1000);
+  state.timerInterval=setInterval(timerTick,1000);
+  saveSession();
   render();
 }
 
@@ -1824,34 +2094,32 @@ function startRestTimer(){
 
 function toggleTimer(){
   if(state.timerRunning){
+    state.timerPausedAccumulated+=Date.now()-state.timerStartedAt;
+    state.timerStartedAt=null;
     clearInterval(state.timerInterval);state.timerRunning=false;
   }else{
+    state.timerStartedAt=Date.now();
     state.timerRunning=true;
-    state.timerInterval=setInterval(()=>{
-      if(state.timerSeconds>0){
-        state.timerSeconds--;
-        const ftEl=document.querySelector('.ft-time');
-        if(ftEl)ftEl.textContent=fmtTime(state.timerSeconds);
-      }else{
-        clearInterval(state.timerInterval);state.timerRunning=false;
-        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-        render();
-      }
-    },1000);
+    state.timerInterval=setInterval(timerTick,1000);
   }
+  saveSession();
   render();
 }
 
 function resetTimer(){
   clearInterval(state.timerInterval);
-  state.timerRunning=false;state.timerSeconds=0;
+  state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+  saveSession();
   render();
 }
 
 function confirmEndWorkout(){
   if(confirm('Discard this workout?')){
     clearInterval(state.timerInterval);
-    state.session=null;state.subPage=null;state.timerRunning=false;state.timerSeconds=0;
+    state.session=null;state.subPage=null;
+    state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+    state.intervalTimer=null;clearInterval(state.intervalTimerInterval);
+    localStorage.removeItem('liftinstuff_active_session');
     render();
   }
 }
@@ -1863,13 +2131,31 @@ async function finishWorkout(){
   state.session.name=name||state.session.name;
   state.session.endTime=new Date().toISOString();
   clearInterval(state.timerInterval);
-  state.timerRunning=false;state.timerSeconds=0;
+  state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+  state.intervalTimer=null;clearInterval(state.intervalTimerInterval);
 
   const workout={...state.session};
   state.workouts.push(workout);
   await dbPut('workouts',workout);
+  syncLeaderboardData(workout);
 
   state.session=null;state.subPage=null;
+  localStorage.removeItem('liftinstuff_active_session');
+  render();
+}
+
+async function finishWorkoutAuto(){
+  if(!state.session)return;
+  state.session.endTime=state.session.endTime||new Date().toISOString();
+  const workout={...state.session};
+  state.workouts.push(workout);
+  await dbPut('workouts',workout);
+  syncLeaderboardData(workout);
+  state.session=null;state.subPage=null;
+  clearInterval(state.timerInterval);
+  state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+  state.intervalTimer=null;clearInterval(state.intervalTimerInterval);
+  localStorage.removeItem('liftinstuff_active_session');
   render();
 }
 
@@ -2093,10 +2379,175 @@ function releaseWakeLock(){
   if(wakeLock){try{wakeLock.release()}catch(e){}}
   wakeLock=null;
 }
-// Re-request wake lock when page becomes visible again
+// Re-request wake lock and update timers when page becomes visible
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&state.subPage==='active-workout')requestWakeLock();
+  if(!document.hidden){
+    if(state.subPage==='active-workout'){
+      requestWakeLock();
+      if(state.timerRunning)render();
+    }
+    if(state.intervalTimer&&state.intervalTimer.phase==='running'){
+      render();
+    }
+    // Check auto-stop
+    checkAutoStop();
+  }
 });
+
+// ============================================================
+// SESSION PERSISTENCE (localStorage)
+// ============================================================
+function saveSession(){
+  if(state.session){
+    const data={
+      session:state.session,
+      timerStartedAt:state.timerStartedAt,
+      timerPausedAccumulated:state.timerPausedAccumulated,
+      timerTargetSeconds:state.timerTargetSeconds,
+      timerRunning:state.timerRunning,
+      subPage:state.subPage,
+      intervalTimer:state.intervalTimer
+    };
+    localStorage.setItem('liftinstuff_active_session',JSON.stringify(data));
+  }else{
+    localStorage.removeItem('liftinstuff_active_session');
+  }
+}
+
+function restoreSession(){
+  const saved=localStorage.getItem('liftinstuff_active_session');
+  if(!saved)return;
+  try{
+    const data=JSON.parse(saved);
+    if(!data.session)return;
+
+    // Check auto-stop (3 hours)
+    const sessionStart=new Date(data.session.startTime).getTime();
+    if(Date.now()-sessionStart>3*60*60*1000){
+      state.session=data.session;
+      state.session.endTime=new Date(sessionStart+3*60*60*1000).toISOString();
+      finishWorkoutAuto();
+      return;
+    }
+
+    state.session=data.session;
+    state.subPage=data.subPage||'active-workout';
+
+    // Restore rest timer
+    if(data.timerRunning&&data.timerStartedAt){
+      state.timerStartedAt=data.timerStartedAt;
+      state.timerPausedAccumulated=data.timerPausedAccumulated||0;
+      state.timerTargetSeconds=data.timerTargetSeconds||0;
+      state.timerRunning=true;
+      const remaining=getTimerRemaining();
+      if(remaining<=0){
+        state.timerRunning=false;state.timerStartedAt=null;
+        state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
+      }else{
+        state.timerInterval=setInterval(timerTick,1000);
+      }
+    }
+
+    // Restore interval timer
+    if(data.intervalTimer){
+      state.intervalTimer=data.intervalTimer;
+      if(state.intervalTimer.phase==='running'){
+        state.intervalTimerInterval=setInterval(intervalTimerTick,200);
+      }
+    }
+  }catch(e){
+    localStorage.removeItem('liftinstuff_active_session');
+  }
+}
+
+function checkAutoStop(){
+  if(state.session){
+    const sessionStart=new Date(state.session.startTime).getTime();
+    if(Date.now()-sessionStart>3*60*60*1000){
+      finishWorkoutAuto();
+    }
+  }
+}
+
+// ============================================================
+// FIREBASE LEADERBOARD
+// ============================================================
+function syncLeaderboardData(workout){
+  const user=localStorage.getItem('liftinstuff_user');
+  if(!user||!fbDb)return;
+  const weekId=getWeekId();
+  const ref=fbDb.ref('leaderboard/'+weekId+'/'+user);
+  ref.once('value').then(snapshot=>{
+    const existing=snapshot.val()||{workouts:0,volume:0,cardioMinutes:0};
+    ref.set({
+      workouts:existing.workouts+1,
+      volume:existing.volume+calcVolume(workout),
+      cardioMinutes:existing.cardioMinutes+getCardioMinutes(workout),
+      lastUpdated:Date.now()
+    });
+  }).catch(()=>{});
+}
+
+function listenToLeaderboard(){
+  if(!fbDb)return;
+  const weekId=getWeekId();
+  fbDb.ref('leaderboard/'+weekId).on('value',snapshot=>{
+    state.leaderboardData=snapshot.val()||{};
+    render();
+  });
+}
+
+function renderLeaderboard(){
+  const data=state.leaderboardData||{};
+  const drew=data.Drew||{workouts:0,volume:0,cardioMinutes:0};
+  const mel=data.Mel||{workouts:0,volume:0,cardioMinutes:0};
+  const streak=getStreak();
+  const fmtVol=v=>v>=1000?(v/1000).toFixed(1)+'k':v;
+
+  return `<div class="card">
+    <div class="card-title mb-4">Weekly Leaderboard</div>
+    <div class="text-xs mb-12" style="color:var(--text3)">Week of ${getWeekStartStr()}</div>
+    <table class="lb-table">
+      <tr><th></th><th>Drew</th><th>Mel</th></tr>
+      <tr><td>Workouts</td>
+        <td class="${drew.workouts>0&&drew.workouts>=mel.workouts?'lb-leader':''}">${drew.workouts}</td>
+        <td class="${mel.workouts>0&&mel.workouts>=drew.workouts?'lb-leader':''}">${mel.workouts}</td></tr>
+      <tr><td>Volume</td>
+        <td class="${drew.volume>0&&drew.volume>=mel.volume?'lb-leader':''}">${fmtVol(drew.volume)}</td>
+        <td class="${mel.volume>0&&mel.volume>=drew.volume?'lb-leader':''}">${fmtVol(mel.volume)}</td></tr>
+      <tr><td>Cardio</td>
+        <td class="${drew.cardioMinutes>0&&drew.cardioMinutes>=mel.cardioMinutes?'lb-leader':''}">${drew.cardioMinutes}min</td>
+        <td class="${mel.cardioMinutes>0&&mel.cardioMinutes>=drew.cardioMinutes?'lb-leader':''}">${mel.cardioMinutes}min</td></tr>
+    </table>
+    ${streak>0?`<div class="text-sm mt-8" style="color:var(--text2)">Streak: ${currentUser} ${streak} week${streak!==1?'s':''}</div>`:''}
+  </div>`;
+}
+
+// ============================================================
+// USER PICKER
+// ============================================================
+function renderUserPicker(){
+  const app=document.getElementById('app');
+  app.innerHTML=`<div class="user-picker">
+    <h1>LiftinStuff</h1>
+    <p>Who's lifting?</p>
+    <button class="pick-btn" onclick="selectUser('Drew')">Drew</button>
+    <button class="pick-btn" onclick="selectUser('Mel')">Mel</button>
+  </div>`;
+}
+
+function selectUser(name){
+  localStorage.setItem('liftinstuff_user',name);
+  currentUser=name;
+  DB_NAME='LiftinStuff_'+name;
+  initApp();
+}
+
+function switchUser(){
+  if(!confirm('Switch user? This will reload the app.'))return;
+  localStorage.removeItem('liftinstuff_user');
+  location.reload();
+}
 
 // ============================================================
 // INIT
@@ -2139,7 +2590,7 @@ const DEFAULT_TEMPLATES=[
   ]},
 ];
 
-async function init(){
+async function initApp(){
   await openDB();
 
   // Load custom exercises
@@ -2163,7 +2614,23 @@ async function init(){
     await dbPut('settings',{key:'templatesSeeded',value:true});
   }
 
+  // Restore active session from localStorage
+  restoreSession();
+
+  // Init Firebase
+  initFirebase();
+
   render();
+}
+
+function init(){
+  currentUser=localStorage.getItem('liftinstuff_user');
+  if(!currentUser){
+    renderUserPicker();
+    return;
+  }
+  DB_NAME='LiftinStuff_'+currentUser;
+  initApp();
 }
 
 init();
