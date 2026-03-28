@@ -1230,6 +1230,7 @@ async function saveGoal(){
 
   state.goals.push(goal);
   await dbPut('goals',goal);
+  backupToFirebase();
   setState({showSetGoal:false,_goalTimeframe:null,_goalType:null});
 }
 
@@ -1238,6 +1239,7 @@ async function deleteGoal(id){
   if(idx>-1){
     await dbDelete('goals',id);
     state.goals.splice(idx,1);
+    backupToFirebase();
     render();
   }
 }
@@ -1574,6 +1576,7 @@ async function savePastWorkout(){
   const idx=state.workouts.findIndex(wk=>wk.id===w.id);
   if(idx>=0)state.workouts[idx]=w;
   await dbPut('workouts',w);
+  backupToFirebase();
   state._viewWorkoutId=w.id;
   state.subPage='workout-detail';
   state._editWorkout=null;
@@ -2133,6 +2136,7 @@ async function finishWorkout(){
   state.workouts.push(workout);
   await dbPut('workouts',workout);
   syncLeaderboardData(workout);
+  backupToFirebase();
 
   state.session=null;state.subPage=null;
   localStorage.removeItem('liftinstuff_active_session');
@@ -2146,6 +2150,7 @@ async function finishWorkoutAuto(){
   state.workouts.push(workout);
   await dbPut('workouts',workout);
   syncLeaderboardData(workout);
+  backupToFirebase();
   state.session=null;state.subPage=null;
   clearInterval(state.timerInterval);
   state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
@@ -2177,6 +2182,7 @@ async function saveTemplate(){
   if(idx>=0)state.templates[idx]=state.editTemplate;
   else state.templates.push(state.editTemplate);
   await dbPut('templates',state.editTemplate);
+  backupToFirebase();
   state.editTemplate=null;state.subPage=null;
   render();
 }
@@ -2185,6 +2191,7 @@ async function deleteTemplate(tid){
   if(!confirm('Delete this template?'))return;
   state.templates=state.templates.filter(t=>t.id!==tid);
   await dbDelete('templates',tid);
+  backupToFirebase();
   render();
 }
 
@@ -2241,6 +2248,7 @@ async function deleteWorkout(wid){
   if(!confirm('Delete this workout? This cannot be undone.'))return;
   state.workouts=state.workouts.filter(w=>w.id!==wid);
   await dbDelete('workouts',wid);
+  backupToFirebase();
   state.subPage=null;
   render();
 }
@@ -2255,6 +2263,7 @@ async function logBW(sid){
   state.bodyweights=state.bodyweights.filter(b=>b.date!==entry.date);
   state.bodyweights.push(entry);
   await dbPut('bodyweight',entry);
+  backupToFirebase();
   render();
 }
 
@@ -2284,6 +2293,7 @@ async function importData(e){
     if(data.templates){state.templates=data.templates;for(const t of data.templates)await dbPut('templates',t)}
     if(data.bodyweights){state.bodyweights=data.bodyweights;for(const b of data.bodyweights)await dbPut('bodyweight',b)}
     if(data.settings?.defaultRestTime){state.defaultRestTime=data.settings.defaultRestTime;await dbPut('settings',{key:'defaultRestTime',value:data.settings.defaultRestTime})}
+    backupToFirebase();
     alert('Data imported successfully!');render();
   }catch(err){alert('Error importing data: '+err.message)}
 }
@@ -2519,6 +2529,72 @@ function renderLeaderboard(){
 }
 
 // ============================================================
+// FIREBASE DATA BACKUP & RESTORE
+// ============================================================
+// Backs up all user data to Firebase so it survives cache clears,
+// device switches, or code updates. Restore runs on init if local is empty.
+
+function backupToFirebase(){
+  if(!fbDb||!currentUser)return;
+  const ref=fbDb.ref('users/'+currentUser);
+  const data={
+    workouts:{},templates:{},bodyweights:{},goals:{},
+    settings:{defaultRestTime:state.defaultRestTime},
+    lastBackup:Date.now()
+  };
+  for(const w of state.workouts)data.workouts[w.id]=w;
+  for(const t of state.templates)data.templates[t.id]=t;
+  for(const b of state.bodyweights)data.bodyweights[b.date]=b;
+  for(const g of state.goals)data.goals[g.id]=g;
+  ref.set(data).then(()=>console.log('[Backup] Synced to Firebase')).catch(e=>console.warn('[Backup] Failed:',e));
+}
+
+async function restoreFromFirebase(){
+  if(!fbDb||!currentUser)return false;
+  try{
+    const snapshot=await fbDb.ref('users/'+currentUser).once('value');
+    const data=snapshot.val();
+    if(!data)return false;
+
+    let restored=false;
+
+    if(data.workouts&&state.workouts.length===0){
+      const workouts=Object.values(data.workouts);
+      for(const w of workouts){state.workouts.push(w);await dbPut('workouts',w)}
+      if(workouts.length>0)restored=true;
+      console.log('[Restore] '+workouts.length+' workouts from Firebase');
+    }
+    if(data.templates&&state.templates.length===0){
+      const templates=Object.values(data.templates);
+      for(const t of templates){state.templates.push(t);await dbPut('templates',t)}
+      if(templates.length>0)restored=true;
+      console.log('[Restore] '+templates.length+' templates from Firebase');
+    }
+    if(data.bodyweights&&state.bodyweights.length===0){
+      const bws=Object.values(data.bodyweights);
+      for(const b of bws){state.bodyweights.push(b);await dbPut('bodyweight',b)}
+      if(bws.length>0)restored=true;
+      console.log('[Restore] '+bws.length+' bodyweight entries from Firebase');
+    }
+    if(data.goals&&state.goals.length===0){
+      const goals=Object.values(data.goals);
+      for(const g of goals){state.goals.push(g);await dbPut('goals',g)}
+      if(goals.length>0)restored=true;
+      console.log('[Restore] '+goals.length+' goals from Firebase');
+    }
+    if(data.settings&&data.settings.defaultRestTime){
+      state.defaultRestTime=data.settings.defaultRestTime;
+      await dbPut('settings',{key:'defaultRestTime',value:data.settings.defaultRestTime});
+    }
+
+    return restored;
+  }catch(e){
+    console.warn('[Restore] Failed:',e);
+    return false;
+  }
+}
+
+// ============================================================
 // USER PICKER
 // ============================================================
 function renderUserPicker(){
@@ -2612,8 +2688,18 @@ async function initApp(){
   // Restore active session from localStorage
   restoreSession();
 
-  // Init Firebase
+  // Init Firebase, then restore from cloud if local is empty, or backup if local has data
   initFirebase();
+  if(fbDb){
+    const hasLocalData=state.workouts.length>0||state.templates.length>0;
+    if(!hasLocalData){
+      restoreFromFirebase().then(restored=>{
+        if(restored)render();
+      });
+    }else{
+      backupToFirebase();
+    }
+  }
 
   render();
 }
