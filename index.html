@@ -472,6 +472,9 @@ const EXERCISES=[
 {id:'cd19',name:'Ski Erg',body:'Cardio',equip:'Cardio Machine',isCardio:true},
 {id:'cd20',name:'4x4 Cardio on Rower',body:'Cardio',equip:'Cardio Machine',isCardio:true},
 {id:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true},
+{id:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,isInterval:true},
+{id:'q40',name:'Box Jump',body:'Quads',equip:'Bodyweight'},
+{id:'b40',name:'Back Extension',body:'Back',equip:'Bodyweight'},
 ];
 
 function getAllExercises(){return [...EXERCISES,...customExercises]}
@@ -882,6 +885,8 @@ function renderLibraryTab(){
 function renderTemplatesTab(){
   return `
     <button class="btn mb-16" onclick="createNewTemplate()"><span style="font-size:20px">+</span> New Template</button>
+    <button class="btn mb-8" style="background:var(--green-dim);border:1px solid var(--green)" onclick="openNorwegian()">Norwegian 4×4 Timer</button>
+    <button class="btn btn-outline mb-16" onclick="loadProgramTemplates()">Load 4-Day Program</button>
     ${state.templates.length===0?'<div class="empty-state"><p>No templates yet.<br>Create one to save your favorite workouts!</p></div>':''}
     ${state.templates.map(t=>`
       <div class="template-card">
@@ -1766,50 +1771,79 @@ function renderTemplatePicker(){
 // INTERVAL TIMER
 // ============================================================
 const INTERVAL_PRESETS={
-  '4x4':{activeSeconds:240,restSeconds:180,rounds:4,label:'4x4'},
-  '30/30':{activeSeconds:30,restSeconds:30,rounds:10,label:'30/30'},
-  'tabata':{activeSeconds:20,restSeconds:10,rounds:8,label:'Tabata'},
+  'norwegian':{warmupSeconds:300,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:300,hrWork:'~90% (165)',hrRecovery:'60-70%',hrWarmup:'easy (~120)',label:'Norwegian 4\u00d74'},
+  '4x4':{warmupSeconds:0,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:0,label:'4x4'},
+  '30/30':{warmupSeconds:0,activeSeconds:30,restSeconds:30,rounds:10,cooldownSeconds:0,label:'30/30'},
+  'tabata':{warmupSeconds:0,activeSeconds:20,restSeconds:10,rounds:8,cooldownSeconds:0,label:'Tabata'},
 };
 
-function openIntervalTimer(exIdx){
-  state.intervalTimer={
-    activeSeconds:240,restSeconds:180,rounds:4,
+const CARDIO_MODALITIES=['Rower','Stairs','Assault Bike','Stationary Bike','Treadmill','Ski Erg','Outdoor Run','Elliptical'];
+
+function newIntervalState(extra){
+  return Object.assign({
+    warmupSeconds:0,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:0,
+    hrWork:'',hrRecovery:'',hrWarmup:'',modality:'',
     phase:'config',currentPhase:'active',currentRound:1,
     phaseStartedAt:null,phasePausedAccum:0,
-    completedActiveTime:0,completedRestTime:0,
-    exerciseIdx:exIdx,preset:'4x4'
-  };
+    completedWarmupTime:0,completedActiveTime:0,completedRestTime:0,completedCooldownTime:0,
+    exerciseIdx:null,preset:'4x4'
+  },extra||{});
+}
+
+function applyPresetFields(it,key){
+  const p=INTERVAL_PRESETS[key];if(!p)return;
+  it.warmupSeconds=p.warmupSeconds||0;it.activeSeconds=p.activeSeconds;it.restSeconds=p.restSeconds;
+  it.rounds=p.rounds;it.cooldownSeconds=p.cooldownSeconds||0;
+  it.hrWork=p.hrWork||'';it.hrRecovery=p.hrRecovery||'';it.hrWarmup=p.hrWarmup||'';
+  it.preset=key;
+}
+
+function openIntervalTimer(exIdx,forcePreset){
+  const it=newIntervalState({exerciseIdx:(exIdx==null?null:exIdx)});
+  let preset=forcePreset||'4x4';
+  if(!forcePreset&&exIdx!=null&&state.session&&state.session.exercises[exIdx]){
+    const sx=state.session.exercises[exIdx];
+    const exData=getAllExercises().find(e=>e.id===sx.exerciseId);
+    if((exData&&exData.isInterval)||/norwegian/i.test(sx.name||''))preset='norwegian';
+  }
+  applyPresetFields(it,preset);
+  state.intervalTimer=it;
   state.subPage='interval-timer';
   render();
 }
 
+function openNorwegian(){
+  const it=newIntervalState({exerciseIdx:null,modality:'Rower'});
+  applyPresetFields(it,'norwegian');
+  state.intervalTimer=it;
+  state.subPage='interval-timer';
+  render();
+}
+
+function setIntervalModality(v){if(state.intervalTimer)state.intervalTimer.modality=v;}
+
 function cancelIntervalTimer(){
   clearInterval(state.intervalTimerInterval);
   state.intervalTimer=null;
-  state.subPage='active-workout';
+  state.subPage=state.session?'active-workout':null;
   saveSession();
   render();
 }
 
 function applyIntervalPreset(key){
   if(!state.intervalTimer)return;
-  if(key==='custom'){
-    state.intervalTimer.preset='custom';
-  }else{
-    const p=INTERVAL_PRESETS[key];
-    state.intervalTimer.activeSeconds=p.activeSeconds;
-    state.intervalTimer.restSeconds=p.restSeconds;
-    state.intervalTimer.rounds=p.rounds;
-    state.intervalTimer.preset=key;
-  }
+  if(key==='custom'){state.intervalTimer.preset='custom';}
+  else{applyPresetFields(state.intervalTimer,key);}
   render();
 }
 
 function startIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
-  it.phase='running';it.currentPhase='active';it.currentRound=1;
+  it.phase='running';
+  it.currentPhase=it.warmupSeconds>0?'warmup':'active';
+  it.currentRound=1;
   it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-  it.completedActiveTime=0;it.completedRestTime=0;
+  it.completedWarmupTime=0;it.completedActiveTime=0;it.completedRestTime=0;it.completedCooldownTime=0;
   clearInterval(state.intervalTimerInterval);
   state.intervalTimerInterval=setInterval(intervalTimerTick,200);
   try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
@@ -1819,49 +1853,42 @@ function startIntervalTimer(){
 
 function getIntervalPhaseRemaining(){
   const it=state.intervalTimer;if(!it||it.phase==='config'||it.phase==='done')return 0;
-  const phaseDur=it.currentPhase==='active'?it.activeSeconds:it.restSeconds;
+  let phaseDur;
+  if(it.currentPhase==='warmup')phaseDur=it.warmupSeconds;
+  else if(it.currentPhase==='cooldown')phaseDur=it.cooldownSeconds;
+  else if(it.currentPhase==='active')phaseDur=it.activeSeconds;
+  else phaseDur=it.restSeconds;
   const elapsed=it.phasePausedAccum+(it.phase==='running'&&it.phaseStartedAt?Date.now()-it.phaseStartedAt:0);
   return Math.max(0,Math.ceil((phaseDur*1000-elapsed)/1000));
+}
+
+function _nextIntervalPhase(it){
+  it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
+  if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+  saveSession();render();
 }
 
 function intervalTimerTick(){
   const it=state.intervalTimer;if(!it||it.phase!=='running')return;
   const remaining=getIntervalPhaseRemaining();
-  if(remaining<=0){
-    // Phase complete
-    if(it.currentPhase==='active'){
-      it.completedActiveTime+=it.activeSeconds;
-      if(it.restSeconds>0){
-        it.currentPhase='rest';
-        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-        saveSession();render();
-      }else{
-        // No rest, go to next round or done
-        if(it.currentRound<it.rounds){
-          it.currentRound++;it.currentPhase='active';
-          it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-          if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-          saveSession();render();
-        }else{
-          completeIntervalTimer();
-        }
-      }
-    }else{
-      it.completedRestTime+=it.restSeconds;
-      if(it.currentRound<it.rounds){
-        it.currentRound++;it.currentPhase='active';
-        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-        saveSession();render();
-      }else{
-        completeIntervalTimer();
-      }
-    }
-  }else{
-    // Update DOM directly
-    const tEl=document.getElementById('interval-time');
-    if(tEl)tEl.textContent=fmtTime(remaining);
+  if(remaining>0){const tEl=document.getElementById('interval-time');if(tEl)tEl.textContent=fmtTime(remaining);return;}
+  if(it.currentPhase==='warmup'){
+    it.completedWarmupTime+=it.warmupSeconds;it.currentPhase='active';_nextIntervalPhase(it);
+  }else if(it.currentPhase==='active'){
+    it.completedActiveTime+=it.activeSeconds;
+    if(it.currentRound<it.rounds){
+      if(it.restSeconds>0){it.currentPhase='rest';_nextIntervalPhase(it);}
+      else{it.currentRound++;it.currentPhase='active';_nextIntervalPhase(it);}
+    }else if(it.cooldownSeconds>0){it.currentPhase='cooldown';_nextIntervalPhase(it);}
+    else if(it.restSeconds>0){it.currentPhase='rest';_nextIntervalPhase(it);}
+    else{completeIntervalTimer();}
+  }else if(it.currentPhase==='rest'){
+    it.completedRestTime+=it.restSeconds;
+    if(it.currentRound<it.rounds){it.currentRound++;it.currentPhase='active';_nextIntervalPhase(it);}
+    else if(it.cooldownSeconds>0){it.currentPhase='cooldown';_nextIntervalPhase(it);}
+    else{completeIntervalTimer();}
+  }else if(it.currentPhase==='cooldown'){
+    it.completedCooldownTime+=it.cooldownSeconds;completeIntervalTimer();
   }
 }
 
@@ -1888,7 +1915,6 @@ function completeIntervalTimer(){
   clearInterval(state.intervalTimerInterval);
   it.phase='done';
   if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
-  // Auto-fill cardio exercise MIN field
   if(it.exerciseIdx!=null&&state.session&&state.session.exercises[it.exerciseIdx]){
     const ex=state.session.exercises[it.exerciseIdx];
     const activeMins=Math.round(it.completedActiveTime/60);
@@ -1903,7 +1929,7 @@ function completeIntervalTimer(){
 function endIntervalTimerAndReturn(){
   clearInterval(state.intervalTimerInterval);
   state.intervalTimer=null;
-  state.subPage='active-workout';
+  state.subPage=state.session?'active-workout':null;
   saveSession();render();
 }
 
@@ -1913,7 +1939,27 @@ function renderIntervalTimer(){
 
   // CONFIG screen
   if(it.phase==='config'){
+    const isNor=it.preset==='norwegian';
     return `<div class="interval-config">
+      ${isNor?`<div class="card" style="border:1px solid var(--green)">
+        <div class="card-title mb-4">Norwegian 4\u00d74</div>
+        <div class="text-sm" style="color:var(--text2)">Warm-up \u2192 4 \u00d7 (4 min hard / 3 min easy) \u2192 cool-down</div>
+        <div class="text-sm mt-8" style="color:var(--text2)">Work HR ${it.hrWork} \u00b7 Recovery ${it.hrRecovery}</div>
+      </div>`:''}
+      <div class="card">
+        <div class="card-title mb-12">Exercise / Modality</div>
+        <select onchange="setIntervalModality(this.value)" style="width:100%;padding:10px;border-radius:var(--radius-sm);background:var(--bg3);color:var(--text);border:1px solid var(--bg4)">
+          <option value="">\u2014 none \u2014</option>
+          ${CARDIO_MODALITIES.map(m=>`<option value="${m}" ${it.modality===m?'selected':''}>${m}</option>`).join('')}
+        </select>
+      </div>
+      <div class="card">
+        <div class="card-title mb-12">Warm-up</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="number" value="${Math.floor(it.warmupSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.warmupSeconds=parseInt(this.value||0)*60+(state.intervalTimer.warmupSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
+          <input type="number" value="${it.warmupSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.warmupSeconds=Math.floor(state.intervalTimer.warmupSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title mb-12">Active Period</div>
         <div style="display:flex;align-items:center;gap:12px">
@@ -1922,10 +1968,17 @@ function renderIntervalTimer(){
         </div>
       </div>
       <div class="card">
-        <div class="card-title mb-12">Rest Period</div>
+        <div class="card-title mb-12">Rest / Recovery</div>
         <div style="display:flex;align-items:center;gap:12px">
           <input type="number" data-sid="it-rest-m" value="${Math.floor(it.restSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=parseInt(this.value)*60+(state.intervalTimer.restSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
           <input type="number" data-sid="it-rest-s" value="${it.restSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=Math.floor(state.intervalTimer.restSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title mb-12">Cool-down</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="number" value="${Math.floor(it.cooldownSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.cooldownSeconds=parseInt(this.value||0)*60+(state.intervalTimer.cooldownSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
+          <input type="number" value="${it.cooldownSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.cooldownSeconds=Math.floor(state.intervalTimer.cooldownSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
         </div>
       </div>
       <div class="card">
@@ -1934,6 +1987,7 @@ function renderIntervalTimer(){
       </div>
       <div class="card-title mb-8">Presets</div>
       <div class="preset-row">
+        <button class="preset-btn ${it.preset==='norwegian'?'active':''}" onclick="applyIntervalPreset('norwegian')">Norwegian 4\u00d74</button>
         <button class="preset-btn ${it.preset==='4x4'?'active':''}" onclick="applyIntervalPreset('4x4')">4x4</button>
         <button class="preset-btn ${it.preset==='30/30'?'active':''}" onclick="applyIntervalPreset('30/30')">30/30</button>
         <button class="preset-btn ${it.preset==='tabata'?'active':''}" onclick="applyIntervalPreset('tabata')">Tabata</button>
@@ -1947,26 +2001,36 @@ function renderIntervalTimer(){
   if(it.phase==='done'){
     const totalActive=it.completedActiveTime;
     const totalRest=it.completedRestTime;
-    const totalTime=totalActive+totalRest;
+    const totalWarm=it.completedWarmupTime;
+    const totalCool=it.completedCooldownTime;
+    const totalTime=totalWarm+totalActive+totalRest+totalCool;
     return `<div class="interval-fs" style="background:var(--bg)">
       <div style="font-size:32px;font-weight:800;color:var(--green-bright);margin-bottom:24px">DONE!</div>
+      ${it.modality?`<div class="text-sm mb-8" style="color:var(--text2)">${it.modality}</div>`:''}
       <div class="text-sm mb-8" style="color:var(--text2)">${it.rounds} rounds completed</div>
       <div class="fw-700 mb-4" style="font-size:20px">${fmtTime(totalTime)} total time</div>
-      <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} active / ${fmtTime(totalRest)} rest</div>
-      <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">Save & Return to Workout</button>
+      <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} work / ${fmtTime(totalRest)} recovery${(totalWarm||totalCool)?` \u00b7 ${fmtTime(totalWarm)} warm-up / ${fmtTime(totalCool)} cool-down`:''}</div>
+      <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">${state.session?'Save & Return to Workout':'Done'}</button>
     </div>`;
   }
 
-  // RUNNING / PAUSED screen (fullscreen)
-  const isActive=it.currentPhase==='active';
+  // RUNNING / PAUSED (fullscreen)
+  const cp=it.currentPhase;
   const isPaused=it.phase==='paused';
   const remaining=getIntervalPhaseRemaining();
-  const bgColor=isPaused?'var(--bg2)':isActive?'#52b788':'#0a0f0a';
-  const textColor=isPaused?'var(--text)':isActive?'#000':'#52b788';
+  const meta=({
+    warmup:{label:'WARM UP',bg:'#3a2e12',fg:'#f0c674',hr:it.hrWarmup},
+    active:{label:'GO',bg:'#52b788',fg:'#000',hr:it.hrWork},
+    rest:{label:'RECOVER',bg:'#0a0f0a',fg:'#52b788',hr:it.hrRecovery},
+    cooldown:{label:'COOL DOWN',bg:'#0d2438',fg:'#7fb3e0',hr:it.hrWarmup}
+  })[cp]||{label:'GO',bg:'#52b788',fg:'#000',hr:''};
+  const showRound=(cp==='active'||cp==='rest');
+  const roundTxt=showRound?`ROUND ${it.currentRound}/${it.rounds}`:meta.label;
+  const sub=[it.modality,meta.hr?`HR ${meta.hr}`:''].filter(Boolean).join('  \u00b7  ');
 
   if(isPaused){
-    return `<div class="interval-fs" style="background:${bgColor}">
-      <div class="if-round" style="color:var(--text2)">ROUND ${it.currentRound}/${it.rounds}</div>
+    return `<div class="interval-fs" style="background:var(--bg2)">
+      <div class="if-round" style="color:var(--text2)">${roundTxt}</div>
       <div class="if-time" style="color:var(--text)">${fmtTime(remaining)}</div>
       <div class="if-label" style="color:var(--text2)">PAUSED</div>
       <div style="display:flex;gap:12px;margin-top:40px">
@@ -1976,11 +2040,12 @@ function renderIntervalTimer(){
     </div>`;
   }
 
-  return `<div class="interval-fs" style="background:${bgColor}">
-    <div class="if-round" style="color:${textColor}">${isActive?'ROUND':'REST'} ${it.currentRound}/${it.rounds}</div>
-    <div class="if-time" style="color:${textColor}" id="interval-time">${fmtTime(remaining)}</div>
-    <div class="if-label" style="color:${textColor}">${isActive?'GO':'REST'}</div>
-    <button class="if-btn" style="background:${isActive?'rgba(0,0,0,.2)':'rgba(255,255,255,.1)'};color:${textColor}" onclick="pauseIntervalTimer()">PAUSE</button>
+  return `<div class="interval-fs" style="background:${meta.bg}">
+    <div class="if-round" style="color:${meta.fg}">${roundTxt}</div>
+    <div class="if-time" style="color:${meta.fg}" id="interval-time">${fmtTime(remaining)}</div>
+    <div class="if-label" style="color:${meta.fg}">${meta.label}</div>
+    ${sub?`<div style="margin-top:8px;font-size:14px;font-weight:600;opacity:.85;color:${meta.fg}">${sub}</div>`:''}
+    <button class="if-btn" style="background:${cp==='active'?'rgba(0,0,0,.2)':'rgba(255,255,255,.12)'};color:${meta.fg}" onclick="pauseIntervalTimer()">PAUSE</button>
   </div>`;
 }
 
@@ -2205,6 +2270,57 @@ async function duplicateTemplate(tid){
   dup.id=uid();dup.name=t.name+' (Copy)';
   state.templates.push(dup);
   await dbPut('templates',dup);
+  render();
+}
+
+function _ps(n,r){const a=[];for(let k=0;k<n;k++)a.push({weight:0,reps:r});return a;}
+function _cs(){return [{reps:0,weight:0,calories:0}];}
+const PROGRAM_TEMPLATES=[
+  {id:'prog-d1',name:'Day 1 \u2014 Upper Strength',exercises:[
+    {exerciseId:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,sets:_cs()},
+    {exerciseId:'b18',name:'Pull-Up',body:'Back',equip:'Bodyweight',sets:_ps(3,4)},
+    {exerciseId:'c18',name:'Dip (Chest)',body:'Chest',equip:'Bodyweight',sets:_ps(3,6)},
+    {exerciseId:'c5',name:'Flat Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'s6',name:'Dumbbell Shoulder Press',body:'Shoulders',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'c6',name:'Incline Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'b10',name:'Lat Pulldown',body:'Back',equip:'Cable',sets:_ps(3,12)}
+  ]},
+  {id:'prog-d2',name:'Day 2 \u2014 Lower Strength',exercises:[
+    {exerciseId:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true,sets:_cs()},
+    {exerciseId:'q1',name:'Barbell Back Squat',body:'Quads',equip:'Barbell',sets:_ps(3,5)},
+    {exerciseId:'b4',name:'Deadlift',body:'Back',equip:'Barbell',sets:_ps(2,5)},
+    {exerciseId:'h1',name:'Romanian Deadlift',body:'Hamstrings',equip:'Barbell',sets:_ps(3,5)},
+    {exerciseId:'b40',name:'Back Extension',body:'Back',equip:'Bodyweight',sets:_ps(3,10)}
+  ]},
+  {id:'prog-d3',name:'Day 3 \u2014 Upper Hypertrophy',exercises:[
+    {exerciseId:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,sets:_cs()},
+    {exerciseId:'b18',name:'Pull-Up',body:'Back',equip:'Bodyweight',sets:_ps(3,0)},
+    {exerciseId:'c18',name:'Dip (Chest)',body:'Chest',equip:'Bodyweight',sets:_ps(3,0)},
+    {exerciseId:'c5',name:'Flat Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'s6',name:'Dumbbell Shoulder Press',body:'Shoulders',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'c6',name:'Incline Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:_ps(3,12)},
+    {exerciseId:'b10',name:'Lat Pulldown',body:'Back',equip:'Cable',sets:_ps(3,12)}
+  ]},
+  {id:'prog-d4',name:'Day 4 \u2014 Lower Hypertrophy',exercises:[
+    {exerciseId:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true,sets:_cs()},
+    {exerciseId:'q40',name:'Box Jump',body:'Quads',equip:'Bodyweight',sets:_ps(3,8)},
+    {exerciseId:'q14',name:'Pistol Squat',body:'Quads',equip:'Bodyweight',sets:_ps(3,6)},
+    {exerciseId:'q7',name:'Dumbbell Step-Up',body:'Quads',equip:'Dumbbell',sets:_ps(3,8)},
+    {exerciseId:'q8',name:'Dumbbell Bulgarian Split Squat',body:'Quads',equip:'Dumbbell',sets:_ps(3,8)}
+  ]}
+];
+
+async function loadProgramTemplates(){
+  if(!confirm('This REPLACES all your current templates with the 4-day program (Day 1-4). Your logged workout history is not affected. Continue?'))return;
+  for(const t of state.templates){await dbDelete('templates',t.id);}
+  state.templates=[];
+  for(const t of PROGRAM_TEMPLATES){
+    const copy=JSON.parse(JSON.stringify(t));
+    state.templates.push(copy);
+    await dbPut('templates',copy);
+  }
+  backupToFirebase();
+  alert('Program loaded \u2014 4 templates added.');
   render();
 }
 
