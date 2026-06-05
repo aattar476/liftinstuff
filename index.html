@@ -71,6 +71,7 @@ input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appear
 
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:flex-end;justify-content:center}
 .modal{background:var(--bg2);border-radius:16px 16px 0 0;padding:24px 20px;padding-bottom:max(24px,env(safe-area-inset-bottom));width:100%;max-height:85vh;overflow-y:auto;animation:slideUp .3s ease}
+.picker-modal{height:85vh;display:flex;flex-direction:column;overflow:hidden}
 .modal-title{font-size:18px;font-weight:700;margin-bottom:16px}
 @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 
@@ -631,6 +632,7 @@ function getTimerRemaining(){
 
 function isStepExercise(name){return /stair|climber|step/i.test(name)}
 function isDistExercise(name){return /run|row|bike|cycle|elliptical|ski.?erg/i.test(name)}
+function isSpeedExercise(name){return /treadmill/i.test(name)}
 
 function getWeekId(){
   const m=getMonday(new Date());
@@ -1379,8 +1381,8 @@ function renderActiveWorkout(){
               <div class="set-row">
                 <div class="set-num">#</div>
                 <div class="set-label" style="width:60px">MIN</div>
-                ${isStepExercise(ex.name)?'<div class="set-label" style="width:60px">SPM</div>':''}
-                ${isDistExercise(ex.name)?'<div class="set-label" style="width:60px">DIST</div>':''}
+                ${isSpeedExercise(ex.name)?'<div class="set-label" style="width:60px">MPH</div>':''}${isStepExercise(ex.name)&&!isSpeedExercise(ex.name)?'<div class="set-label" style="width:60px">SPM</div>':''}
+                ${isDistExercise(ex.name)&&!isSpeedExercise(ex.name)&&!isStepExercise(ex.name)?'<div class="set-label" style="width:60px">DIST</div>':''}
                 <div class="set-label" style="width:60px">CAL</div>
                 <div style="width:36px"></div>
               </div>
@@ -1388,8 +1390,8 @@ function renderActiveWorkout(){
                 <div class="set-row">
                   <div class="set-num">${si+1}</div>
                   <input class="set-input" style="width:60px" data-sid="cm-${i}-${si}" type="number" inputmode="numeric" value="${set.reps||''}" placeholder="0" onchange="updateSet(${i},${si},'reps',this.value)">
-                  ${isStepExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cs-${i}-${si}" type="number" inputmode="numeric" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
-                  ${isDistExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cd-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  ${isSpeedExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cmph-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}${isStepExercise(ex.name)&&!isSpeedExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cs-${i}-${si}" type="number" inputmode="numeric" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  ${isDistExercise(ex.name)&&!isSpeedExercise(ex.name)&&!isStepExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cd-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
                   <input class="set-input" style="width:60px" data-sid="cc-${i}-${si}" type="number" inputmode="numeric" value="${set.calories||''}" placeholder="0" onchange="updateSet(${i},${si},'calories',this.value)">
                   <button class="set-check ${set.done?'done':''}" onclick="event.stopPropagation();toggleSet(${i},${si})">${set.done?icons.check:''}</button>
                 </div>`).join('')}
@@ -1604,12 +1606,12 @@ function renderModals(){
 
   return `
     <div class="modal-overlay" onclick="closePicker(event)">
-      <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal picker-modal" onclick="event.stopPropagation()">
         <div class="flex-between mb-12"><span class="modal-title" style="margin:0">Add Exercise</span><button style="font-size:24px;color:var(--text2)" onclick="setState({showExercisePicker:false})">×</button></div>
         <div class="search-bar">${icons.search}<input type="text" data-sid="picker-search" placeholder="Search..." value="${state.libSearch}" oninput="debouncedSearch('libSearch',this.value)"></div>
         <div class="filter-row">${['All',...BODY_PARTS].map(bp=>`<button class="filter-chip ${state.libBodyFilter===bp?'active':''}" onclick="setState({libBodyFilter:'${bp}'})">${bp}</button>`).join('')}</div>
         <div class="filter-row">${['All',...EQUIPMENT].map(eq=>`<button class="filter-chip ${state.libEquipFilter===eq?'active':''}" onclick="setState({libEquipFilter:'${eq}'})">${eq}</button>`).join('')}</div>
-        <div id="picker-results" style="max-height:50vh;overflow-y:auto">
+        <div id="picker-results" style="flex:1;min-height:0;overflow-y:auto">
           ${filtered.map(ex=>`
             <div class="exercise-item" onclick="pickExercise('${ex.id}')">
               <div class="exercise-info"><div class="exercise-name">${ex.name}</div><div class="exercise-meta">${ex.body} · ${ex.equip}</div></div>
@@ -1656,7 +1658,7 @@ async function saveCustomExercise(){
 // MET-based estimates: calories = MET * bodyWeightKg * durationHours
 // For lifting: ~3-6 MET depending on intensity. We use set duration estimate.
 // For cardio: ~6-12 MET depending on type.
-const CARDIO_METS={'Treadmill Run':9.8,'Treadmill Walk (Incline)':6,'Treadmill Sprint Intervals':11,'Assault Bike':10.5,'Assault Bike Intervals':12,'Rowing Machine':7,'Rowing Intervals':9.5,'Stair Climber':9,'Stair Climber (Zone 2)':6.5,'Stationary Bike':7.5,'Stationary Bike Intervals':10,'Elliptical':5.5,'Outdoor Run':9.8,'Outdoor Sprint Intervals':11,'Jump Rope':11,'Battle Ropes':10,'Box Jumps':8,'Burpees':10,'Ski Erg':7.5,'4x4 Cardio on Rower':8.5,'Zone 2 Cardio on Stairs':6.5};
+const CARDIO_METS={'Treadmill Run':9.8,'Treadmill Walk (Incline)':6,'Treadmill Sprint Intervals':11,'Assault Bike':10.5,'Assault Bike Intervals':12,'Rowing Machine':7,'Rowing Intervals':9.5,'Stair Climber':9,'Stair Climber (Zone 2)':6.5,'Stationary Bike':7.5,'Stationary Bike Intervals':10,'Elliptical':5.5,'Outdoor Run':9.8,'Outdoor Sprint Intervals':11,'Jump Rope':11,'Battle Ropes':10,'Box Jumps':8,'Burpees':10,'Ski Erg':7.5,'4x4 Cardio on Rower':8.5,'Zone 2 Cardio on Stairs':6.5,'Norwegian 4x4':9.5};
 function estimateCalories(exercise,bodyWeightLbs){
   const bwKg=(bodyWeightLbs||180)*0.4536;
   if(exercise.isCardio){
@@ -1837,6 +1839,34 @@ function applyIntervalPreset(key){
   render();
 }
 
+let _intvAudioCtx=null;
+function _ensureIntervalAudio(){
+  try{ if(!_intvAudioCtx)_intvAudioCtx=new (window.AudioContext||window.webkitAudioContext)(); if(_intvAudioCtx.state==='suspended')_intvAudioCtx.resume(); }catch(e){}
+}
+function _intvBeep(freq,dur,when){
+  try{ if(!_intvAudioCtx)return; const t=_intvAudioCtx.currentTime+(when||0); const o=_intvAudioCtx.createOscillator(),g=_intvAudioCtx.createGain(); o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(_intvAudioCtx.destination); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.4,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.start(t); o.stop(t+dur+0.03); }catch(e){}
+}
+function intervalCue(phase){
+  _ensureIntervalAudio();
+  if(phase==='active'){_intvBeep(880,0.18,0);_intvBeep(1175,0.2,0.2);}
+  else if(phase==='rest'){_intvBeep(523,0.28,0);}
+  else if(phase==='warmup'){_intvBeep(660,0.18,0);}
+  else if(phase==='cooldown'){_intvBeep(440,0.32,0);}
+  else if(phase==='done'){_intvBeep(880,0.15,0);_intvBeep(880,0.15,0.2);_intvBeep(1318,0.35,0.4);}
+  try{ if('vibrate' in navigator)navigator.vibrate(phase==='done'?[400,150,400,150,400]:[200,80,200]); }catch(e){}
+}
+function requestNotifyPermission(){
+  try{ if('Notification' in window && Notification.permission==='default')Notification.requestPermission().catch(function(){}); }catch(e){}
+}
+function notifyInterval(title,body){
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted')return;
+    if(navigator.serviceWorker&&navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(function(reg){reg.showNotification(title,{body:body||'',tag:'liftinstuff-interval',renotify:true});}).catch(function(){try{new Notification(title,{body:body||''})}catch(e){}});
+    }else{ try{new Notification(title,{body:body||''})}catch(e){} }
+  }catch(e){}
+}
+
 function startIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
   it.phase='running';
@@ -1845,8 +1875,11 @@ function startIntervalTimer(){
   it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
   it.completedWarmupTime=0;it.completedActiveTime=0;it.completedRestTime=0;it.completedCooldownTime=0;
   clearInterval(state.intervalTimerInterval);
+  _ensureIntervalAudio();
+  requestNotifyPermission();
+  requestWakeLock();
   state.intervalTimerInterval=setInterval(intervalTimerTick,200);
-  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  intervalCue(it.currentPhase);
   saveSession();
   render();
 }
@@ -1862,33 +1895,52 @@ function getIntervalPhaseRemaining(){
   return Math.max(0,Math.ceil((phaseDur*1000-elapsed)/1000));
 }
 
-function _nextIntervalPhase(it){
-  it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-  if('vibrate' in navigator)navigator.vibrate([200,100,200]);
-  saveSession();render();
+function _phaseDurSec(it){
+  if(it.currentPhase==='warmup')return it.warmupSeconds;
+  if(it.currentPhase==='cooldown')return it.cooldownSeconds;
+  if(it.currentPhase==='active')return it.activeSeconds;
+  return it.restSeconds;
 }
-
-function intervalTimerTick(){
-  const it=state.intervalTimer;if(!it||it.phase!=='running')return;
-  const remaining=getIntervalPhaseRemaining();
-  if(remaining>0){const tEl=document.getElementById('interval-time');if(tEl)tEl.textContent=fmtTime(remaining);return;}
-  if(it.currentPhase==='warmup'){
-    it.completedWarmupTime+=it.warmupSeconds;it.currentPhase='active';_nextIntervalPhase(it);
-  }else if(it.currentPhase==='active'){
+function _advanceIntervalPhase(it,carryMs){
+  const cp=it.currentPhase; let next=null;
+  if(cp==='warmup'){ it.completedWarmupTime+=it.warmupSeconds; next='active'; }
+  else if(cp==='active'){
     it.completedActiveTime+=it.activeSeconds;
-    if(it.currentRound<it.rounds){
-      if(it.restSeconds>0){it.currentPhase='rest';_nextIntervalPhase(it);}
-      else{it.currentRound++;it.currentPhase='active';_nextIntervalPhase(it);}
-    }else if(it.cooldownSeconds>0){it.currentPhase='cooldown';_nextIntervalPhase(it);}
-    else if(it.restSeconds>0){it.currentPhase='rest';_nextIntervalPhase(it);}
-    else{completeIntervalTimer();}
-  }else if(it.currentPhase==='rest'){
+    if(it.currentRound<it.rounds){ if(it.restSeconds>0){next='rest';} else {it.currentRound++;next='active';} }
+    else if(it.cooldownSeconds>0){ next='cooldown'; }
+    else if(it.restSeconds>0){ next='rest'; }
+    else { return 'done'; }
+  }else if(cp==='rest'){
     it.completedRestTime+=it.restSeconds;
-    if(it.currentRound<it.rounds){it.currentRound++;it.currentPhase='active';_nextIntervalPhase(it);}
-    else if(it.cooldownSeconds>0){it.currentPhase='cooldown';_nextIntervalPhase(it);}
-    else{completeIntervalTimer();}
-  }else if(it.currentPhase==='cooldown'){
-    it.completedCooldownTime+=it.cooldownSeconds;completeIntervalTimer();
+    if(it.currentRound<it.rounds){ it.currentRound++; next='active'; }
+    else if(it.cooldownSeconds>0){ next='cooldown'; }
+    else { return 'done'; }
+  }else if(cp==='cooldown'){ it.completedCooldownTime+=it.cooldownSeconds; return 'done'; }
+  it.currentPhase=next; it.phaseStartedAt=Date.now(); it.phasePausedAccum=carryMs||0;
+  saveSession();
+  return 'continue';
+}
+function _onIntervalPhaseEntered(it){
+  const labels={warmup:'Warm up',active:'Work — GO!',rest:'Recover',cooldown:'Cool down'};
+  const r=(it.currentPhase==='active'||it.currentPhase==='rest')?(' (Round '+it.currentRound+'/'+it.rounds+')'):'';
+  intervalCue(it.currentPhase);
+  notifyInterval('LiftinStuff — '+(labels[it.currentPhase]||'')+r, it.modality||'');
+}
+function intervalTimerTick(){
+  const it=state.intervalTimer; if(!it||it.phase!=='running')return;
+  let transitioned=false, guard=0;
+  while(guard++<300){
+    const dur=_phaseDurSec(it);
+    const elapsed=it.phasePausedAccum+(it.phaseStartedAt?Date.now()-it.phaseStartedAt:0);
+    const remMs=dur*1000-elapsed;
+    if(remMs>0){
+      if(transitioned){ _onIntervalPhaseEntered(it); render(); }
+      else { const tEl=document.getElementById('interval-time'); if(tEl)tEl.textContent=fmtTime(Math.ceil(remMs/1000)); }
+      return;
+    }
+    const res=_advanceIntervalPhase(it, -remMs);
+    transitioned=true;
+    if(res==='done'){ completeIntervalTimer(); return; }
   }
 }
 
@@ -1906,7 +1958,7 @@ function resumeIntervalTimer(){
   it.phaseStartedAt=Date.now();
   it.phase='running';
   state.intervalTimerInterval=setInterval(intervalTimerTick,200);
-  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  _ensureIntervalAudio();requestWakeLock();
   saveSession();render();
 }
 
@@ -1914,7 +1966,9 @@ function completeIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
   clearInterval(state.intervalTimerInterval);
   it.phase='done';
-  if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
+  intervalCue('done');
+  notifyInterval('LiftinStuff — Interval complete!', (it.rounds||'')+' rounds done'+(it.modality?' · '+it.modality:''));
+  releaseWakeLock();
   if(it.exerciseIdx!=null&&state.session&&state.session.exercises[it.exerciseIdx]){
     const ex=state.session.exercises[it.exerciseIdx];
     const activeMins=Math.round(it.completedActiveTime/60);
@@ -1922,12 +1976,39 @@ function completeIntervalTimer(){
       ex.sets[0].reps=activeMins;
       ex.sets[0].done=true;
     }
+  }else if(it.exerciseIdx==null&&!state.session){
+    it.loggedToHistory=true;
+    _logIntervalWorkout(it);
   }
   saveSession();render();
 }
 
+async function _logIntervalWorkout(it){
+  try{
+    const totalSec=(it.completedWarmupTime||0)+(it.completedActiveTime||0)+(it.completedRestTime||0)+(it.completedCooldownTime||0);
+    const totalMin=Math.max(1,Math.round(totalSec/60));
+    const end=new Date(); const start=new Date(end.getTime()-totalSec*1000);
+    const label=(it.preset==='norwegian')?'Norwegian 4\u00d74':((INTERVAL_PRESETS[it.preset]&&INTERVAL_PRESETS[it.preset].label)?(INTERVAL_PRESETS[it.preset].label+' Intervals'):'Interval Session');
+    const workout={
+      id:uid(),
+      name: it.modality?(label+' \u2014 '+it.modality):label,
+      startTime:start.toISOString(),
+      endTime:end.toISOString(),
+      currentExIdx:0,
+      exercises:[{exerciseId:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,
+        sets:[{reps:totalMin,weight:0,calories:0,done:true}]}]
+    };
+    state.workouts.push(workout);
+    await dbPut('workouts',workout);
+    try{syncLeaderboardData(workout);}catch(e){}
+    backupToFirebase();
+    render();
+  }catch(e){}
+}
+
 function endIntervalTimerAndReturn(){
   clearInterval(state.intervalTimerInterval);
+  releaseWakeLock();
   state.intervalTimer=null;
   state.subPage=state.session?'active-workout':null;
   saveSession();render();
@@ -2008,6 +2089,7 @@ function renderIntervalTimer(){
       <div style="font-size:32px;font-weight:800;color:var(--green-bright);margin-bottom:24px">DONE!</div>
       ${it.modality?`<div class="text-sm mb-8" style="color:var(--text2)">${it.modality}</div>`:''}
       <div class="text-sm mb-8" style="color:var(--text2)">${it.rounds} rounds completed</div>
+      ${it.loggedToHistory?'<div class="text-sm mb-8" style="color:var(--green-bright)">\u2713 Saved to history</div>':''}
       <div class="fw-700 mb-4" style="font-size:20px">${fmtTime(totalTime)} total time</div>
       <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} work / ${fmtTime(totalRest)} recovery${(totalWarm||totalCool)?` \u00b7 ${fmtTime(totalWarm)} warm-up / ${fmtTime(totalCool)} cool-down`:''}</div>
       <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">${state.session?'Save & Return to Workout':'Done'}</button>
@@ -2511,7 +2593,8 @@ document.addEventListener('visibilitychange',()=>{
       if(state.timerRunning)render();
     }
     if(state.intervalTimer&&state.intervalTimer.phase==='running'){
-      render();
+      requestWakeLock();
+      intervalTimerTick();
     }
     // Check auto-stop
     checkAutoStop();
