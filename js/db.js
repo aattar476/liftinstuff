@@ -129,13 +129,14 @@ function normalizeImport(json){
 }
 
 // Replaces the contents of every store present in the import. Stores the file
-// doesn't mention are left alone. One transaction: all or nothing.
+// doesn't mention are left alone. Settings merge key by key instead, so an old
+// backup can't wipe the program weights. One transaction: all or nothing.
 function replaceStores(stores){
   const names=Object.keys(stores);
   return new Promise((res,rej)=>{
     if(names.length===0)return res();
     const tx=db.transaction(names,'readwrite');
-    for(const n of names){const s=tx.objectStore(n);s.clear();for(const rec of stores[n])s.put(rec)}
+    for(const n of names){const s=tx.objectStore(n);if(n!=='settings')s.clear();for(const rec of stores[n])s.put(rec)}
     tx.oncomplete=()=>res();tx.onerror=e=>rej(e.target.error);tx.onabort=e=>rej(tx.error||new Error('Import aborted'));
   });
 }

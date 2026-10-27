@@ -234,13 +234,16 @@ const EXERCISES=[
 {id:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true},
 ];
 
-function getAllExercises(){return [...EXERCISES,...customExercises]}
+function getAllExercises(){return [...EXERCISES,...PROGRAM_EXERCISES,...customExercises]}
 
 // ============================================================
 // APP STATE
 // ============================================================
 let state={
-  tab:'workout',
+  tab:'today',
+  // program settings (see js/program.js DEFAULT_PROGRAM)
+  program:JSON.parse(JSON.stringify(DEFAULT_PROGRAM)),homeWeekIdx:null,
+  lastExport:null,pendingBackup:null,backups:[],storagePersisted:false,
   subPage:null,
   // workout session
   session:null, // {id,name,startTime,exercises:[{exerciseId,name,body,equip,sets:[{weight,reps,done}]}],currentExIdx:0}
@@ -257,13 +260,10 @@ let state={
   // bodyweight
   bodyweights:[],
   // stats
-  statsRange:'week',statsView:'charts',
   // calendar
-  calMonth:new Date().getMonth(),calYear:new Date().getFullYear(),calSelected:null,
   // settings
   defaultRestTime:90,
   // edit template
-  editTemplate:null,
   // custom exercise modal
   showCustomExercise:false,
   // select exercise modal
@@ -336,14 +336,6 @@ function updatePickerResults() {
         </div>`).join('');
 }
 
-// Destroy Chart.js instances before re-render to prevent memory leaks
-function destroyCharts() {
-    const canvases = document.querySelectorAll('canvas');
-    canvases.forEach(c => {
-        const chart = Chart.getChart(c);
-        if(chart) chart.destroy();
-    });
-}
 const fmtDate=d=>{const dt=new Date(d);return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})};
 const fmtTime=s=>{const m=Math.floor(s/60);const sec=s%60;return `${m}:${sec.toString().padStart(2,'0')}`};
 const fmtDuration=s=>{const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}m`:`${m}m`};
@@ -372,10 +364,11 @@ function getExercisePR(exerciseId){
 function calcVolume(workout){
   let total=0;
   for(const ex of workout.exercises){
-    if(ex.isCardio)continue;
-    for(const s of ex.sets)if(s.done)total+=(s.weight||0)*(s.reps||0);
+    if(ex.isCardio||ex.unit==='s'||ex.unit==='min')continue;
+    const k=ex.unit==='kg'?KG_TO_LB:1;
+    for(const s of ex.sets)if(s.done)total+=(s.weight||0)*k*(s.reps||0);
   }
-  return total;
+  return Math.round(total);
 }
 
 function getTimerRemaining(){
@@ -386,29 +379,6 @@ function getTimerRemaining(){
 
 function isStepExercise(name){return /stair|climber|step/i.test(name)}
 function isDistExercise(name){return /run|row|bike|cycle|elliptical|ski.?erg/i.test(name)}
-
-function getWeekId(){
-  const m=getMonday(new Date());
-  return m.toISOString().slice(0,10);
-}
-function getWeekStartStr(){
-  return getMonday(new Date()).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-}
-
-function getCardioMinutes(workout){
-  let total=0;
-  for(const ex of workout.exercises){
-    const exData=getAllExercises().find(e=>e.id===ex.exerciseId);
-    if(exData&&exData.isCardio){
-      if(ex.sets&&ex.sets.length>0){
-        for(const s of ex.sets){if(s.done)total+=(s.reps||0)}
-      }else{
-        total+=(ex.durationMin||0);
-      }
-    }
-  }
-  return total;
-}
 
 function getStreak(){
   if(state.workouts.length===0)return 0;
@@ -441,8 +411,6 @@ function getSetsPerBodyPart(workouts){
 // ============================================================
 function render(){
   const app=document.getElementById('app');
-  // Destroy Chart.js instances before replacing DOM to prevent memory leaks
-  destroyCharts();
   // Preserve scroll position (#5 fix)
   const contentEl=document.getElementById('main-content');
   const scrollTop=contentEl?contentEl.scrollTop:0;
@@ -464,7 +432,8 @@ function render(){
     </div>`;
   }
 
-  app.innerHTML=renderHeader()+`<div class="content" id="main-content" style="${floatingTimer?'padding-bottom:80px':''}">`+renderPage()+`</div>`+renderTabBar()+floatingTimer+renderModals();
+  const dock=state.subPage==='run'&&state.session?renderRunDock():'';
+  app.innerHTML=renderHeader()+`<div class="content ${state.subPage==='run'?'is-run':''}" id="main-content" style="${floatingTimer?'padding-bottom:96px':''}">`+renderPage()+`</div>`+(dock||renderTabBar())+floatingTimer+renderModals();
 
   // Restore scroll position
   const newContent=document.getElementById('main-content');
@@ -484,127 +453,62 @@ function render(){
 }
 
 function renderHeader(){
-  if(state.subPage==='active-workout'){
-    return `<div class="header"><button class="header-back" onclick="confirmEndWorkout()">${icons.back}</button><h1>${state.session?.name||'Workout'}</h1><button class="header-btn" onclick="finishWorkout()">Finish</button></div>`;
+  const back=(fn,title,right='')=>`<div class="header"><button class="header-back" aria-label="Back" onclick="${fn}">${icons.back}</button><h1>${title}</h1>${right||'<div class="hdr-spacer"></div>'}</div>`;
+  switch(state.subPage){
+    case 'run':return renderRunHeader();
+    case 'active-workout':return `<div class="header"><button class="header-back" aria-label="Discard" onclick="confirmEndWorkout()">${icons.back}</button><h1>${esc(state.session?.name||'Workout')}</h1><button class="header-btn" onclick="finishWorkout()">Finish</button></div>`;
+    case 'workout-setup':return back('cancelWorkoutSetup()','Quick workout');
+    case 'workout-detail':return back('goBackFromDetail()','Session',`<button class="header-btn" onclick="editPastWorkout('${state._viewWorkoutId}')">Edit</button>`);
+    case 'edit-past-workout':return back("setState({subPage:'workout-detail'})",'Edit session',`<button class="header-btn" onclick="savePastWorkout()">Save</button>`);
+    case 'interval-timer':{const it=state.intervalTimer;if(it&&(it.phase==='running'||it.phase==='paused'))return '';return back('cancelIntervalTimer()','4×4 timer')}
+    case 'preview':return back('setState({subPage:null})','Session');
+    case 'program':return back("setState({subPage:null})",'Program');
+    case 'next-cycle':return back("setState({subPage:state.tab==='more'?null:null,_cycleDraft:null})",'Next cycle');
+    case 'lift':return back("setState({subPage:null})",'Lift');
+    case 'goals':return back("setState({subPage:null})",'Goals');
+    case 'library':return back("setState({subPage:null})",'Exercise library');
   }
-  if(state.subPage==='workout-setup'){
-    return `<div class="header"><button class="header-back" onclick="cancelWorkoutSetup()">${icons.back}</button><h1>Build Workout</h1><div></div></div>`;
-  }
-  if(state.subPage==='settings'){
-    return `<div class="header"><button class="header-back" onclick="setState({subPage:null})">${icons.back}</button><h1>Settings</h1><div></div></div>`;
-  }
-  if(state.subPage==='edit-template'){
-    return `<div class="header"><button class="header-back" onclick="setState({subPage:null,editTemplate:null})">${icons.back}</button><h1>${state.editTemplate?.id?'Edit':'New'} Template</h1><button class="header-btn" onclick="saveTemplate()">Save</button></div>`;
-  }
-  if(state.subPage==='workout-detail'){
-    return `<div class="header"><button class="header-back" onclick="goBackFromDetail()">${icons.back}</button><h1>Workout Detail</h1><button class="header-btn" onclick="editPastWorkout('${state._viewWorkoutId}')">Edit</button></div>`;
-  }
-  if(state.subPage==='edit-past-workout'){
-    return `<div class="header"><button class="header-back" onclick="setState({subPage:'workout-detail'})">${icons.back}</button><h1>Edit Workout</h1><button class="header-btn" onclick="savePastWorkout()">Save</button></div>`;
-  }
-  if(state.subPage==='template-picker'){
-    return `<div class="header"><button class="header-back" onclick="setState({subPage:null})">${icons.back}</button><h1>Pick Template</h1><div></div></div>`;
-  }
-  if(state.subPage==='interval-timer'){
-    const it=state.intervalTimer;
-    if(it&&(it.phase==='running'||it.phase==='paused'))return '';
-    return `<div class="header"><button class="header-back" onclick="cancelIntervalTimer()">${icons.back}</button><h1>Interval Timer</h1><div></div></div>`;
-  }
-  const titles={workout:'LiftinStuff',library:'Exercise Library',templates:'Templates',goals:'Goals',stats:'Stats',history:'History'};
-  let right='';
-  if(state.tab==='workout')right=`<button class="header-btn" style="padding:8px" onclick="setState({subPage:'settings'})">${icons.gear}</button>`;
-  return `<div class="header"><h1>${titles[state.tab]}</h1>${right}</div>`;
+  const titles={today:'Ski Season Build',history:'History',progress:'Progress',more:'More'};
+  return `<div class="header"><h1>${titles[state.tab]}</h1></div>`;
 }
 
 function goBackFromDetail(){
-  state.subPage=null;state._viewWorkoutId=null;
+  state.subPage=state._detailFrom||null;state._viewWorkoutId=null;
   render();
 }
 
 function renderTabBar(){
   if(state.subPage)return '';
   const tabs=[
-    {id:'workout',icon:icons.dumbbell,label:'Workout'},
-    {id:'library',icon:icons.book,label:'Library'},
-    {id:'templates',icon:icons.clipboard,label:'Templates'},
-    {id:'goals',icon:icons.target,label:'Goals'},
-    {id:'stats',icon:icons.chart,label:'Stats'},
+    {id:'today',icon:icons.dumbbell,label:'Today'},
     {id:'history',icon:icons.clock,label:'History'},
+    {id:'progress',icon:icons.chart,label:'Progress'},
+    {id:'more',icon:icons.gear,label:'More'},
   ];
-  return `<div class="tab-bar">${tabs.map(t=>`<button class="tab ${state.tab===t.id?'active':''}" onclick="switchTab('${t.id}')">${t.icon}<span>${t.label}</span></button>`).join('')}</div>`;
+  return `<nav class="tab-bar">${tabs.map(t=>`<button class="tab ${state.tab===t.id?'active':''}" aria-current="${state.tab===t.id?'page':'false'}" onclick="switchTab('${t.id}')">${t.icon}<span>${t.label}</span></button>`).join('')}</nav>`;
 }
 
 function renderPage(){
-  if(state.subPage==='active-workout')return renderActiveWorkout();
-  if(state.subPage==='workout-setup')return renderWorkoutSetup();
-  if(state.subPage==='settings')return renderSettings();
-  if(state.subPage==='edit-template')return renderEditTemplate();
-  if(state.subPage==='workout-detail')return renderWorkoutDetail();
-  if(state.subPage==='edit-past-workout')return renderEditPastWorkout();
-  if(state.subPage==='template-picker')return renderTemplatePicker();
-  if(state.subPage==='interval-timer')return renderIntervalTimer();
-  switch(state.tab){
-    case 'workout':return renderWorkoutTab();
-    case 'library':return renderLibraryTab();
-    case 'templates':return renderTemplatesTab();
+  switch(state.subPage){
+    case 'run':return state.session?renderRunner():'';
+    case 'active-workout':return renderActiveWorkout();
+    case 'workout-setup':return renderWorkoutSetup();
+    case 'workout-detail':return renderWorkoutDetail();
+    case 'edit-past-workout':return renderEditPastWorkout();
+    case 'interval-timer':return renderIntervalTimer();
+    case 'preview':return renderPreview();
+    case 'program':return renderProgramSettings();
+    case 'next-cycle':return renderNextCycle();
+    case 'lift':return renderLiftDetail();
     case 'goals':return renderGoalsTab();
-    case 'stats':return renderStatsTab();
-    case 'history':return renderHistoryTab();
+    case 'library':return renderLibraryTab();
   }
-}
-
-// ============================================================
-// WORKOUT TAB
-// ============================================================
-function renderWorkoutTab(){
-  const weekW=getWeekWorkouts();
-  const totalVol=weekW.reduce((s,w)=>s+calcVolume(w),0);
-  const shouldPromptBW=checkBWPrompt();
-
-  const latestBWHome=state.bodyweights.length>0?[...state.bodyweights].sort((a,b)=>new Date(b.date)-new Date(a.date))[0]:null;
-  const bwPrompt=`<div class="card" style="border-color:${shouldPromptBW?'var(--green)':'var(--bg3)'}">
-    <div class="flex-between mb-8">
-      <div class="card-title" style="margin:0">Body Weight</div>
-      ${latestBWHome?`<span class="fw-700 text-green">${latestBWHome.weight} lbs</span>`:''}
-    </div>
-    ${shouldPromptBW?`<p class="text-sm" style="color:var(--green-bright);margin-bottom:8px">First workout of the week — time to weigh in!</p>`:''}
-    <div style="display:flex;gap:8px;align-items:center">
-      <input type="number" data-sid="bw-home" placeholder="${latestBWHome?'Update weight (lbs)':'Enter weight (lbs)'}" style="flex:1" inputmode="decimal">
-      <button class="btn btn-sm" onclick="logBW('bw-home')">Log</button>
-    </div>
-    ${latestBWHome?`<div class="text-xs mt-8" style="color:var(--text3)">Last logged: ${fmtDate(latestBWHome.date)}</div>`:''}
-  </div>`;
-
-  return `
-    ${bwPrompt}
-    <div class="grid-2 mb-16">
-      <div class="stat-card"><div class="stat-value">${weekW.length}</div><div class="stat-label">Workouts This Week</div></div>
-      <div class="stat-card"><div class="stat-value">${totalVol>=1000?(totalVol/1000).toFixed(1)+'k':totalVol}</div><div class="stat-label">Lbs This Week</div></div>
-    </div>
-    <div class="grid-2 mb-16">
-      <div class="stat-card"><div class="stat-value">${weekW.reduce((s,w)=>{const bw=state.bodyweights.length?[...state.bodyweights].sort((a,b)=>new Date(b.date)-new Date(a.date))[0].weight:180;return s+getSessionCalories(w,bw)},0)}</div><div class="stat-label">Est. Calories Burned</div></div>
-      <div class="stat-card"><div class="stat-value">${weekW.reduce((s,w)=>s+w.exercises.reduce((ss,ex)=>ss+ex.sets.filter(st=>st.done).length,0),0)}</div><div class="stat-label">Total Sets</div></div>
-    </div>
-    <button class="btn mb-12" onclick="beginWorkoutSetup(null)"><span style="font-size:20px">+</span> Start Empty Workout</button>
-    <button class="btn btn-outline mb-16" onclick="setState({subPage:'template-picker'})">Start From Template</button>
-    ${weekW.length>0?`<div class="card-title mb-8">Recent Workouts</div>${weekW.sort((a,b)=>new Date(b.startTime)-new Date(a.startTime)).slice(0,3).map(w=>`
-      <div class="history-workout" onclick="viewWorkout('${w.id}')">
-        <div class="flex-between"><span class="hw-name">${w.name}</span><span class="hw-date">${fmtDate(w.startTime)}</span></div>
-        <div class="hw-stats"><span>${w.exercises.length} exercises</span><span>${calcVolume(w).toLocaleString()} lbs</span>${w.endTime?`<span>${fmtDuration(Math.floor((new Date(w.endTime)-new Date(w.startTime))/1000))}</span>`:''}</div>
-      </div>`).join('')}`:'<div class="empty-state"><p>No workouts yet this week.<br>Tap above to get started!</p></div>'}
-  `;
-}
-
-function checkBWPrompt(){
-  const monday=getMonday(new Date());
-  const mondayKey=dayKey(monday);
-  const thisWeekBW=state.bodyweights.find(b=>{
-    const bDate=new Date(b.date);
-    return bDate>=monday;
-  });
-  if(thisWeekBW)return false;
-  const thisWeekWorkouts=state.workouts.filter(w=>new Date(w.startTime)>=monday);
-  return thisWeekWorkouts.length===0;
+  switch(state.tab){
+    case 'today':return renderHome();
+    case 'history':return renderHistory();
+    case 'progress':return renderProgress();
+    case 'more':return renderMore();
+  }
 }
 
 // ============================================================
@@ -633,98 +537,6 @@ function renderLibraryTab(){
 }
 
 // ============================================================
-// TEMPLATES TAB
-// ============================================================
-function renderTemplatesTab(){
-  return `
-    <button class="btn mb-16" onclick="createNewTemplate()"><span style="font-size:20px">+</span> New Template</button>
-    ${state.templates.length===0?'<div class="empty-state"><p>No templates yet.<br>Create one to save your favorite workouts!</p></div>':''}
-    ${state.templates.map(t=>`
-      <div class="template-card">
-        <div class="flex-between">
-          <div><div class="template-name">${t.name}</div><div class="template-info">${t.exercises.length} exercises</div></div>
-          <div style="display:flex;gap:4px">
-            <button class="btn-icon" style="color:var(--green-bright)" onclick="beginWorkoutSetup('${t.id}')" title="Start">${icons.play}</button>
-            <button class="btn-icon" style="color:var(--text2)" onclick="editTemplate('${t.id}')" title="Edit">${icons.edit}</button>
-            <button class="btn-icon" style="color:var(--text3)" onclick="duplicateTemplate('${t.id}')" title="Duplicate">${icons.copy}</button>
-            <button class="btn-icon" style="color:var(--red)" onclick="deleteTemplate('${t.id}')" title="Delete">${icons.trash}</button>
-          </div>
-        </div>
-        <div style="margin-top:8px">${t.exercises.map(e=>`<span class="badge" style="margin:2px">${e.name}</span>`).join('')}</div>
-      </div>
-    `).join('')}
-  `;
-}
-
-// ============================================================
-// STATS TAB
-// ============================================================
-function renderStatsTab(){
-  const ranges={week:'This Week',month:'This Month',all:'All Time'};
-  let workouts=state.workouts;
-  const now=new Date();
-  if(state.statsRange==='week')workouts=workouts.filter(w=>new Date(w.startTime)>=weekStart);
-  else if(state.statsRange==='month')workouts=workouts.filter(w=>{const d=new Date(w.startTime);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()});
-
-  const totalVol=workouts.reduce((s,w)=>s+calcVolume(w),0);
-  const totalSets=workouts.reduce((s,w)=>s+w.exercises.reduce((ss,ex)=>ss+ex.sets.filter(st=>st.done).length,0),0);
-  const bpSets=getSetsPerBodyPart(workouts);
-
-  // Body weight data
-  const bwData=[...state.bodyweights].sort((a,b)=>new Date(a.date)-new Date(b.date));
-  const latestBW=bwData.length>0?bwData[bwData.length-1]:null;
-
-  return `
-    <div class="toggle-group">${Object.entries(ranges).map(([k,v])=>`<button class="toggle-opt ${state.statsRange===k?'active':''}" onclick="setState({statsRange:'${k}'})">${v}</button>`).join('')}</div>
-    <div class="toggle-group"><button class="toggle-opt ${state.statsView==='charts'?'active':''}" onclick="setState({statsView:'charts'})">Charts</button><button class="toggle-opt ${state.statsView==='numbers'?'active':''}" onclick="setState({statsView:'numbers'})">Numbers</button></div>
-
-    <div class="grid-3 mb-16">
-      <div class="stat-card"><div class="stat-value">${workouts.length}</div><div class="stat-label">Workouts</div></div>
-      <div class="stat-card"><div class="stat-value">${totalVol>=1000?(totalVol/1000).toFixed(1)+'k':totalVol}</div><div class="stat-label">Total Lbs</div></div>
-      <div class="stat-card"><div class="stat-value">${totalSets}</div><div class="stat-label">Total Sets</div></div>
-    </div>
-
-    <div class="card">
-      <div class="flex-between mb-8">
-        <span class="card-title" style="margin:0">Body Weight</span>
-        ${latestBW?`<span class="fw-700 text-green">${latestBW.weight} lbs</span>`:'<span class="text-sm" style="color:var(--text3)">No data yet</span>'}
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <input type="number" data-sid="bw-stats" placeholder="Log weight (lbs)" style="flex:1" inputmode="decimal">
-        <button class="btn btn-sm" onclick="logBW('bw-stats')">Log</button>
-      </div>
-      ${latestBW?`<div class="text-xs" style="color:var(--text3)">Last: ${fmtDate(latestBW.date)}</div>`:''}
-      ${bwData.length>1?`<div class="chart-container"><canvas id="chart-bw"></canvas></div>`:''}
-    </div>
-
-    ${state.statsView==='charts'?`
-      <div class="card"><div class="card-title">Sets Per Body Part</div><div class="chart-container"><canvas id="chart-bp"></canvas></div></div>
-      <div class="card"><div class="card-title">Volume Over Time</div><div class="chart-container"><canvas id="chart-vol"></canvas></div></div>
-    `:`
-      <div class="card"><div class="card-title mb-8">Sets Per Body Part</div>${BODY_PARTS.map(bp=>`<div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--bg3)"><span class="text-sm">${bp}</span><span class="fw-700">${bpSets[bp]||0} sets</span></div>`).join('')}</div>
-      <div class="card"><div class="card-title mb-8">Personal Records</div>${renderPRList(workouts)}</div>
-      ${bwData.length>0?`<div class="card"><div class="card-title mb-8">Body Weight History</div>${bwData.slice().reverse().slice(0,10).map(b=>`<div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--bg3)"><span class="text-sm">${fmtDate(b.date)}</span><span class="fw-700">${b.weight} lbs</span></div>`).join('')}</div>`:''}
-    `}
-  `;
-}
-
-function renderPRList(workouts){
-  const prs={};
-  for(const w of state.workouts){
-    for(const ex of w.exercises){
-      for(const s of ex.sets){
-        if(s.done&&s.weight>0){
-          if(!prs[ex.name]||s.weight>prs[ex.name])prs[ex.name]=s.weight;
-        }
-      }
-    }
-  }
-  const sorted=Object.entries(prs).sort((a,b)=>b[1]-a[1]);
-  if(sorted.length===0)return '<div class="text-sm" style="color:var(--text3)">Complete some workouts to see PRs</div>';
-  return sorted.slice(0,15).map(([name,w])=>`<div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--bg3)"><span class="text-sm">${name}</span><span class="fw-700 text-green">${w} lbs</span></div>`).join('');
-}
-
-// ============================================================
 // GOALS TAB
 // ============================================================
 function getGoalProgress(goal){
@@ -736,7 +548,7 @@ function getGoalProgress(goal){
   if(goal.type==='gym_days'){
     const count=state.workouts.filter(w=>{
       const d=new Date(w.startTime);
-      return d>=start&&d<=end;
+      return d>=start&&d<=end&&(!w.program||(SESSION_META[w.program.sessionId]||{}).gym);
     }).length;
     const pct=Math.min(100,Math.round((count/goal.target)*100));
     return {current:count,target:goal.target,pct,label:`${count} of ${goal.target} completed`,expired,complete:count>=goal.target};
@@ -1013,72 +825,6 @@ async function deleteGoalAndNew(id,timeframe){
 }
 
 // ============================================================
-// HISTORY TAB
-// ============================================================
-function renderHistoryTab(){
-  const year=state.calYear;
-  const month=state.calMonth;
-  const firstDay=new Date(year,month,1);
-  const lastDay=new Date(year,month+1,0);
-  const startDow=firstDay.getDay();
-  const daysInMonth=lastDay.getDate();
-  const today=new Date();
-  const todayStr=dayKey(today);
-  const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
-
-  const workoutDays=new Set();
-  state.workouts.forEach(w=>{
-    const d=new Date(w.startTime);
-    if(d.getMonth()===month&&d.getFullYear()===year)workoutDays.add(d.getDate());
-  });
-
-  let calDays='';
-  for(let i=0;i<startDow;i++)calDays+=`<div class="cal-day empty"></div>`;
-  for(let d=1;d<=daysInMonth;d++){
-    const dk=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const cls=['cal-day'];
-    if(dk===todayStr)cls.push('today');
-    if(workoutDays.has(d))cls.push('has-workout');
-    if(state.calSelected===dk)cls.push('selected');
-    calDays+=`<div class="${cls.join(' ')}" onclick="selectCalDay('${dk}')">${d}</div>`;
-  }
-
-  let selectedWorkouts='';
-  if(state.calSelected){
-    const dayW=state.workouts.filter(w=>dayKey(new Date(w.startTime))===state.calSelected).sort((a,b)=>new Date(b.startTime)-new Date(a.startTime));
-    if(dayW.length>0){
-      selectedWorkouts=dayW.map(w=>`
-        <div class="history-workout" onclick="viewWorkout('${w.id}')">
-          <div class="flex-between"><span class="hw-name">${w.name}</span><span class="hw-date">${new Date(w.startTime).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span></div>
-          <div class="hw-stats"><span>${w.exercises.length} exercises</span><span>${calcVolume(w).toLocaleString()} lbs</span>${w.endTime?`<span>${fmtDuration(Math.floor((new Date(w.endTime)-new Date(w.startTime))/1000))}</span>`:''}</div>
-        </div>`).join('');
-    } else {
-      selectedWorkouts='<div class="text-sm text-center" style="color:var(--text3);padding:16px">No workouts on this day</div>';
-    }
-  }
-
-  const allSorted=[...state.workouts].sort((a,b)=>new Date(b.startTime)-new Date(a.startTime));
-
-  return `
-    <div class="flex-between mb-12">
-      <button class="header-back" onclick="changeMonth(-1)">${icons.back}</button>
-      <span class="fw-700">${monthNames[month]} ${year}</span>
-      <button class="header-back" style="transform:rotate(180deg)" onclick="changeMonth(1)">${icons.back}</button>
-    </div>
-    <div class="calendar">
-      ${['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=>`<div class="cal-header">${d}</div>`).join('')}
-      ${calDays}
-    </div>
-    ${selectedWorkouts}
-    ${!state.calSelected?`<div class="card-title mb-8 mt-16">All Workouts</div>${allSorted.length===0?'<div class="empty-state"><p>No workout history yet</p></div>':allSorted.slice(0,20).map(w=>`
-      <div class="history-workout" onclick="viewWorkout('${w.id}')">
-        <div class="flex-between"><span class="hw-name">${w.name}</span><span class="hw-date">${fmtDate(w.startTime)}</span></div>
-        <div class="hw-stats"><span>${w.exercises.length} exercises</span><span>${calcVolume(w).toLocaleString()} lbs</span></div>
-      </div>`).join('')}`:''}
-  `;
-}
-
-// ============================================================
 // ACTIVE WORKOUT
 // ============================================================
 function renderActiveWorkout(){
@@ -1181,103 +927,40 @@ function removeExFromSession(idx){
 }
 
 // ============================================================
-// EDIT TEMPLATE
-// ============================================================
-function renderEditTemplate(){
-  if(!state.editTemplate)return '';
-  const t=state.editTemplate;
-  return `
-    <div class="mb-16"><label class="text-sm" style="color:var(--text2);display:block;margin-bottom:6px">Template Name</label><input type="text" id="template-name" value="${t.name}" placeholder="e.g. Push Day"></div>
-    ${t.exercises.map((ex,i)=>`
-      <div class="card">
-        <div class="flex-between mb-8">
-          <span class="fw-700">${ex.name}</span>
-          <button style="color:var(--red);padding:4px" onclick="removeTemplateExercise(${i})">${icons.trash}</button>
-        </div>
-        <div class="text-xs mb-8" style="color:var(--text2)">${ex.body} · ${ex.equip}</div>
-        ${ex.sets.map((s,si)=>`
-          <div class="set-row">
-            <div class="set-num">${si+1}</div>
-            <input class="set-input" type="number" inputmode="decimal" value="${s.weight||''}" placeholder="lbs" onchange="updateTemplateSet(${i},${si},'weight',this.value)">
-            <input class="set-input" type="number" inputmode="numeric" value="${s.reps||''}" placeholder="reps" onchange="updateTemplateSet(${i},${si},'reps',this.value)">
-          </div>`).join('')}
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-sm btn-outline" style="flex:1" onclick="addTemplateSet(${i})">+ Set</button>
-          ${ex.sets.length>1?`<button class="btn btn-sm" style="width:auto;background:var(--bg4)" onclick="removeTemplateSet(${i})">- Set</button>`:''}
-        </div>
-      </div>`).join('')}
-    <button class="btn btn-outline mt-8" onclick="addExerciseToTemplate()"><span style="font-size:18px">+</span> Add Exercise</button>
-  `;
-}
-
-// ============================================================
-// SETTINGS
-// ============================================================
-function renderSettings(){
-  return `
-    <div class="card">
-      <div class="card-title mb-12">Rest Timer Default</div>
-      <div style="display:flex;align-items:center;gap:12px">
-        <input type="number" id="rest-default" value="${state.defaultRestTime}" style="width:80px;text-align:center" inputmode="numeric">
-        <span class="text-sm" style="color:var(--text2)">seconds</span>
-      </div>
-      <button class="btn btn-sm mt-12" style="width:auto" onclick="saveSettings()">Save</button>
-    </div>
-    <div class="card">
-      <div class="card-title mb-8">Body Weight Log</div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <input type="number" data-sid="bw-settings" placeholder="Weight (lbs)" style="flex:1" inputmode="decimal">
-        <button class="btn btn-sm" onclick="logBW('bw-settings')">Log</button>
-      </div>
-      ${state.bodyweights.sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10).map(bw=>`
-        <div class="bw-entry"><span class="bw-date">${fmtDate(bw.date)}</span><span class="bw-weight">${bw.weight} lbs</span></div>`).join('')}
-      ${state.bodyweights.length===0?'<div class="text-sm" style="color:var(--text3)">No entries yet</div>':''}
-    </div>
-    <div class="card">
-      <div class="card-title mb-8">Data</div>
-      <button class="btn btn-outline mb-8" onclick="exportData()">Export All Data (JSON)</button>
-      <label class="btn btn-outline" style="cursor:pointer">Import Data<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>
-    </div>
-    <div class="card"><div class="text-center text-sm" style="color:var(--text3)">LiftinStuff v2.0<br>Workout data stored locally · Backed up to Firebase</div></div>
-  `;
-}
-
-// ============================================================
 // WORKOUT DETAIL
 // ============================================================
 function renderWorkoutDetail(){
   const w=state.workouts.find(w=>w.id===state._viewWorkoutId);
   if(!w)return '<p>Workout not found</p>';
-  const vol=calcVolume(w);
-  const dur=w.totalDuration||w.endTime?Math.floor((new Date(w.endTime||w.startTime)-new Date(w.startTime))/1000):0;
-  const latestBW=state.bodyweights.length>0?[...state.bodyweights].sort((a,b)=>new Date(b.date)-new Date(a.date))[0].weight:180;
-  const cals=getSessionCalories(w,latestBW);
+  const vol=calcVolume(w),dur=workoutDurationSec(w);
+  const fmtSet=(ex,s)=>{
+    if(!s.done)return '<span class="muted">not done</span>';
+    if(ex.unit==='min'||ex.isCardio)return (s.reps||ex.durationMin||0)+' min';
+    if(ex.unit==='s')return (s.weight?s.weight+' lb · ':'')+(s.secs||0)+' s'+(ex.perSide?'/side':'');
+    return s.weight+' '+(ex.unit==='kg'?'kg':'lb')+' × '+s.reps+(ex.perSide?'/side':'');
+  };
   return `
-    <div class="fw-700 mb-4" style="font-size:20px">${w.name}</div>
-    <div class="text-sm mb-12" style="color:var(--text2)">${fmtDate(w.startTime)}</div>
-    <div class="grid-3 mb-16">
-      <div class="stat-card"><div class="stat-value" style="font-size:20px">${w.totalDuration?fmtDuration(w.totalDuration*60):(dur?fmtDuration(dur):'-')}</div><div class="stat-label">Duration</div></div>
-      <div class="stat-card"><div class="stat-value" style="font-size:20px">${vol>=1000?(vol/1000).toFixed(1)+'k':vol}</div><div class="stat-label">Lbs</div></div>
-      <div class="stat-card"><div class="stat-value" style="font-size:20px">${cals}</div><div class="stat-label">Est. Cal</div></div>
+    <div class="sel-banner" style="border-top:4px solid ${workoutColor(w)}"><strong>${esc(w.name)}</strong><span class="num">${fmtDate(w.startTime)}</span>${w.program?`<span class="focus">${esc(w.program.weekLabel)}</span>`:''}</div>
+    <div class="stats3">
+      <div class="stat"><span class="num">${dur?fmtDuration(dur):'–'}</span><small>duration</small></div>
+      <div class="stat"><span class="num">${doneSets(w)}</span><small>sets</small></div>
+      <div class="stat"><span class="num">${vol>=1000?(vol/1000).toFixed(1)+'k':vol}</span><small>lb volume</small></div>
     </div>
+    ${w.notes?`<div class="card"><span class="eyebrow">Note</span><p>${esc(w.notes)}</p></div>`:''}
     ${w.exercises.map(ex=>{
-      const pr=getExercisePR(ex.exerciseId);
-      if(ex.isCardio){
-        const cdMins=ex.sets&&ex.sets.length>0&&ex.sets.some(s=>s.done)?ex.sets.filter(s=>s.done).reduce((t,s)=>t+(s.reps||0),0):(ex.durationMin||0);
-        return `<div class="card"><div class="card-title">${ex.name}</div><div class="text-xs mb-4" style="color:var(--text2)">${ex.body} · ${ex.equip}</div><div class="fw-700 text-green">${cdMins} min</div></div>`;
-      }
-      return `<div class="card">
-        <div class="card-title">${ex.name}</div>
-        <div class="text-xs mb-8" style="color:var(--text2)">${ex.body} · ${ex.equip}</div>
-        ${ex.sets.map((s,i)=>{
-          const isPR=s.done&&s.weight>=pr&&s.weight>0;
-          return `<div class="flex-between" style="padding:4px 0"><span class="text-sm">Set ${i+1}</span><span class="fw-700">${s.done?`${s.weight} lbs × ${s.reps}${isPR?' <span class="pr-badge">PR</span>':''}`:'-'}</span></div>`;
-        }).join('')}
+      const oldPR=w.program?null:getExercisePR(ex.exerciseId);
+      const sets=ex.isCardio&&(!ex.sets||!ex.sets.length)?[{done:true,reps:ex.durationMin||0}]:ex.sets;
+      return `<div class="card ex-card">
+        <div class="card-h"><h3>${esc(ex.name)}</h3>${ex.skipped?'<span class="tag muted">skipped</span>':''}</div>
+        <table class="sets"><tbody>${sets.map((s,i)=>{
+          const pr=s.pr||(oldPR!=null&&s.done&&s.weight>0&&s.weight>=oldPR);
+          return `<tr class="${s.done?'':'muted'}"><td class="sn num">${i+1}</td><td class="rx">${fmtSet(ex,s)}${pr?'<span class="badge">best</span>':''}</td></tr>`;
+        }).join('')}</tbody></table>
       </div>`;
     }).join('')}
-    <div style="display:flex;gap:8px;margin-top:16px">
-      <button class="btn btn-outline" style="flex:1" onclick="editPastWorkout('${w.id}')">Edit Workout</button>
-      <button class="btn btn-danger" style="width:auto;padding:12px 20px" onclick="deleteWorkout('${w.id}')">Delete</button>
+    <div class="row2 mt-16">
+      <button class="btn btn-outline" onclick="editPastWorkout('${w.id}')">Edit</button>
+      <button class="btn btn-danger-ghost" onclick="deleteWorkout('${w.id}')">Delete</button>
     </div>
   `;
 }
@@ -1430,13 +1113,12 @@ function getSessionCalories(session,bwLbs){
 function setState(updates){
   Object.assign(state,updates);
   render();
-  if(state.statsView==='charts'&&state.tab==='stats'&&!state.subPage)setTimeout(renderCharts,50);
 }
 
 function switchTab(tab){
-  state.tab=tab;state.subPage=null;state.calSelected=null;
+  state.tab=tab;state.subPage=null;state.homeWeekIdx=null;
   render();
-  if(tab==='stats'&&state.statsView==='charts')setTimeout(renderCharts,50);
+  const c=document.getElementById('main-content');if(c)c.scrollTop=0;
 }
 
 // ============================================================
@@ -1444,22 +1126,9 @@ function switchTab(tab){
 // ============================================================
 function todayStr(){const d=new Date();return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
 
-function beginWorkoutSetup(tid){
-  const dateSuffix=' — '+todayStr();
-  if(tid){
-    const t=state.templates.find(t=>t.id===tid);
-    if(!t)return;
-    state._setupWorkout={
-      name:t.name+dateSuffix,
-      exercises:t.exercises.map(ex=>({
-        exerciseId:ex.exerciseId,name:ex.name,body:ex.body,equip:ex.equip,
-        isCardio:ex.isCardio||false,durationMin:ex.durationMin||0,
-        sets:ex.isCardio?[{reps:0,weight:0,calories:0,done:false}]:(ex.sets||[]).map(s=>({weight:s.weight||0,reps:s.reps||0,done:false}))
-      }))
-    };
-  }else{
-    state._setupWorkout={name:'Workout'+dateSuffix,exercises:[]};
-  }
+function beginWorkoutSetup(){
+  if(state.session){resumeSession();return}
+  state._setupWorkout={name:'Workout — '+todayStr(),exercises:[]};
   state.subPage='workout-setup';
   render();
 }
@@ -1495,22 +1164,6 @@ function launchWorkout(){
   state.subPage='active-workout';
   saveSession();
   render();
-}
-
-// ============================================================
-// TEMPLATE PICKER (tap to select)
-// ============================================================
-function renderTemplatePicker(){
-  if(state.templates.length===0)return '<div class="empty-state"><p>No templates yet!<br>Create one in the Templates tab.</p></div>';
-  return `
-    <p class="text-sm mb-16" style="color:var(--text2)">Tap a template to build your workout:</p>
-    ${state.templates.map(t=>`
-      <div class="template-card" onclick="beginWorkoutSetup('${t.id}')">
-        <div class="template-name">${t.name}</div>
-        <div class="template-info">${t.exercises.length} exercises</div>
-        <div style="margin-top:8px">${t.exercises.map(e=>`<span class="badge" style="margin:2px">${e.name}</span>`).join('')}</div>
-      </div>`).join('')}
-  `;
 }
 
 // ============================================================
@@ -1558,12 +1211,13 @@ function applyIntervalPreset(key){
 
 function startIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
+  unlockAudio();
   it.phase='running';it.currentPhase='active';it.currentRound=1;
   it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
   it.completedActiveTime=0;it.completedRestTime=0;
   clearInterval(state.intervalTimerInterval);
   state.intervalTimerInterval=setInterval(intervalTimerTick,200);
-  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  requestWakeLock();
   saveSession();
   render();
 }
@@ -1585,14 +1239,14 @@ function intervalTimerTick(){
       if(it.restSeconds>0){
         it.currentPhase='rest';
         it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+        alertRound();
         saveSession();render();
       }else{
         // No rest, go to next round or done
         if(it.currentRound<it.rounds){
           it.currentRound++;it.currentPhase='active';
           it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-          if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+          alertRound();
           saveSession();render();
         }else{
           completeIntervalTimer();
@@ -1603,13 +1257,14 @@ function intervalTimerTick(){
       if(it.currentRound<it.rounds){
         it.currentRound++;it.currentPhase='active';
         it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+        alertRound();
         saveSession();render();
       }else{
         completeIntervalTimer();
       }
     }
   }else{
+    if(remaining<=3&&it._lastCount!==remaining+'-'+it.currentRound+it.currentPhase){it._lastCount=remaining+'-'+it.currentRound+it.currentPhase;alertCountdown(remaining)}
     // Update DOM directly
     const tEl=document.getElementById('interval-time');
     if(tEl)tEl.textContent=fmtTime(remaining);
@@ -1630,7 +1285,7 @@ function resumeIntervalTimer(){
   it.phaseStartedAt=Date.now();
   it.phase='running';
   state.intervalTimerInterval=setInterval(intervalTimerTick,200);
-  try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  requestWakeLock();
   saveSession();render();
 }
 
@@ -1638,7 +1293,7 @@ function completeIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
   clearInterval(state.intervalTimerInterval);
   it.phase='done';
-  if('vibrate' in navigator)navigator.vibrate([500,200,500,200,500]);
+  alertEnd();
   // Auto-fill cardio exercise MIN field
   if(it.exerciseIdx!=null&&state.session&&state.session.exercises[it.exerciseIdx]){
     const ex=state.session.exercises[it.exerciseIdx];
@@ -1712,8 +1367,8 @@ function renderIntervalTimer(){
   const isActive=it.currentPhase==='active';
   const isPaused=it.phase==='paused';
   const remaining=getIntervalPhaseRemaining();
-  const bgColor=isPaused?'var(--bg2)':isActive?'#52b788':'#0a0f0a';
-  const textColor=isPaused?'var(--text)':isActive?'#000':'#52b788';
+  const bgColor=isPaused?'var(--surface)':isActive?'var(--accent)':'var(--bg)';
+  const textColor=isPaused?'var(--ink)':isActive?'var(--on-accent)':'var(--accent)';
 
   if(isPaused){
     return `<div class="interval-fs" style="background:${bgColor}">
@@ -1742,13 +1397,6 @@ function addExerciseToSession(){
   render();
 }
 
-function addExerciseToTemplate(){
-  state.showExercisePicker=true;
-  state.pickerCallback='template';
-  state.libSearch='';state.libBodyFilter='All';state.libEquipFilter='All';
-  render();
-}
-
 function pickExercise(exId){
   const ex=getAllExercises().find(e=>e.id===exId);
   if(!ex)return;
@@ -1761,12 +1409,6 @@ function pickExercise(exId){
     saveSession();
   } else if(state.pickerCallback==='setup'){
     state._setupWorkout.exercises.push(newEx);
-  } else if(state.pickerCallback==='template'){
-    if(ex.isCardio){
-      state.editTemplate.exercises.push({exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,isCardio:true,sets:[{reps:0,weight:0,calories:0}]});
-    }else{
-      state.editTemplate.exercises.push({exerciseId:ex.id,name:ex.name,body:ex.body,equip:ex.equip,sets:[{weight:0,reps:0},{weight:0,reps:0},{weight:0,reps:0}]});
-    }
   }
   state.showExercisePicker=false;
   render();
@@ -1819,16 +1461,18 @@ function timerTick(){
   if(remaining<=0){
     clearInterval(state.timerInterval);state.timerRunning=false;
     state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
-    if('vibrate' in navigator)navigator.vibrate([200,100,200]);
+    alertEnd();
     saveSession();
     render();
   }else{
+    if(remaining<=3&&state._lastCount!==remaining){state._lastCount=remaining;alertCountdown(remaining)}
     const ftEl=document.querySelector('.ft-time');
     if(ftEl)ftEl.textContent=fmtTime(remaining);
   }
 }
 
 function startRestTimerWith(secs){
+  unlockAudio();state._lastCount=null;
   state._selectedRest=secs;
   state.timerTargetSeconds=secs;
   state.timerStartedAt=Date.now();
@@ -1911,86 +1555,9 @@ async function finishWorkoutAuto(){
   render();
 }
 
-// Templates
-function createNewTemplate(){
-  state.editTemplate={id:uid(),name:'',exercises:[]};
-  state.subPage='edit-template';
-  render();
-}
-
-function editTemplate(tid){
-  const t=state.templates.find(t=>t.id===tid);
-  if(!t)return;
-  state.editTemplate=JSON.parse(JSON.stringify(t));
-  state.subPage='edit-template';
-  render();
-}
-
-async function saveTemplate(){
-  const name=document.getElementById('template-name').value.trim();
-  if(!name){alert('Please enter a template name');return}
-  state.editTemplate.name=name;
-  const idx=state.templates.findIndex(t=>t.id===state.editTemplate.id);
-  if(idx>=0)state.templates[idx]=state.editTemplate;
-  else state.templates.push(state.editTemplate);
-  await dbPut('templates',state.editTemplate);
-  backupToFirebase();
-  state.editTemplate=null;state.subPage=null;
-  render();
-}
-
-async function deleteTemplate(tid){
-  if(!confirm('Delete this template?'))return;
-  state.templates=state.templates.filter(t=>t.id!==tid);
-  await dbDelete('templates',tid);
-  backupToFirebase();
-  render();
-}
-
-async function duplicateTemplate(tid){
-  const t=state.templates.find(t=>t.id===tid);
-  if(!t)return;
-  const dup=JSON.parse(JSON.stringify(t));
-  dup.id=uid();dup.name=t.name+' (Copy)';
-  state.templates.push(dup);
-  await dbPut('templates',dup);
-  render();
-}
-
-function removeTemplateExercise(idx){
-  state.editTemplate.exercises.splice(idx,1);
-  render();
-}
-
-function updateTemplateSet(exIdx,setIdx,field,value){
-  state.editTemplate.exercises[exIdx].sets[setIdx][field]=parseFloat(value)||0;
-}
-
-function addTemplateSet(exIdx){
-  state.editTemplate.exercises[exIdx].sets.push({weight:0,reps:0});
-  render();
-}
-
-function removeTemplateSet(exIdx){
-  if(state.editTemplate.exercises[exIdx].sets.length>1)state.editTemplate.exercises[exIdx].sets.pop();
-  render();
-}
-
 // History
-function changeMonth(dir){
-  state.calMonth+=dir;
-  if(state.calMonth>11){state.calMonth=0;state.calYear++}
-  if(state.calMonth<0){state.calMonth=11;state.calYear--}
-  state.calSelected=null;
-  render();
-}
-
-function selectCalDay(dk){
-  state.calSelected=state.calSelected===dk?null:dk;
-  render();
-}
-
 function viewWorkout(wid){
+  state._detailFrom=state.subPage==='lift'?'lift':null;
   state._viewWorkoutId=wid;
   state.subPage='workout-detail';
   render();
@@ -2019,78 +1586,12 @@ async function logBW(sid){
   render();
 }
 
-// Settings
-async function saveSettings(){
-  const rest=parseInt(document.getElementById('rest-default').value)||90;
-  state.defaultRestTime=rest;
-  await dbPut('settings',{key:'defaultRestTime',value:rest});
-  alert('Settings saved!');
-}
-
 // Export/Import
 async function exportData(){
   const exp=await exportAllData();
   downloadJSON(exp,'liftinstuff-backup-'+dayKey(new Date())+'.json');
   await dbPut('settings',{key:'lastExport',value:exp.exportedAt});
   state.lastExport=exp.exportedAt;render();
-}
-
-async function importData(e){
-  const file=e.target.files[0];if(!file)return;
-  try{
-    const parsed=normalizeImport(JSON.parse(await file.text()));
-    if(!confirm('Replace data on this phone with '+((parsed.stores.workouts||[]).length)+' workouts from this file?'))return;
-    await replaceStores(parsed.stores);
-    alert('Data imported. Reloading.');location.reload();
-  }catch(err){alert('Error importing data: '+err.message)}
-}
-
-// ============================================================
-// CHARTS
-// ============================================================
-function renderCharts(){
-  renderBPChart();
-  renderVolChart();
-  renderBWChart();
-}
-
-function renderBPChart(){
-  const canvas=document.getElementById('chart-bp');
-  if(!canvas)return;
-  let workouts=state.workouts;
-  const now=new Date();
-  if(state.statsRange==='week')workouts=workouts.filter(w=>new Date(w.startTime)>=weekStart);
-  else if(state.statsRange==='month')workouts=workouts.filter(w=>{const d=new Date(w.startTime);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()});
-
-  const bpSets=getSetsPerBodyPart(workouts);
-  const labels=BODY_PARTS.filter(bp=>bpSets[bp]>0);
-  const data=labels.map(bp=>bpSets[bp]);
-
-  new Chart(canvas,{type:'bar',data:{labels,datasets:[{data,backgroundColor:'#2d6a4f',borderColor:'#40916c',borderWidth:1,borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#a0a0a0',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#a0a0a0'},grid:{color:'#1a241a'},beginAtZero:true}}}});
-}
-
-function renderVolChart(){
-  const canvas=document.getElementById('chart-vol');
-  if(!canvas)return;
-  const sorted=[...state.workouts].sort((a,b)=>new Date(a.startTime)-new Date(b.startTime));
-  let filtered=sorted;
-  const now=new Date();
-  if(state.statsRange==='week')filtered=sorted.filter(w=>new Date(w.startTime)>=weekStart);
-  else if(state.statsRange==='month')filtered=sorted.filter(w=>{const d=new Date(w.startTime);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()});
-
-  const labels=filtered.map(w=>fmtDate(w.startTime));
-  const data=filtered.map(w=>calcVolume(w));
-
-  new Chart(canvas,{type:'line',data:{labels,datasets:[{data,borderColor:'#52b788',backgroundColor:'rgba(82,183,136,0.1)',fill:true,tension:.3,pointBackgroundColor:'#52b788',pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#a0a0a0',font:{size:10},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#a0a0a0'},grid:{color:'#1a241a'},beginAtZero:true}}}});
-}
-
-function renderBWChart(){
-  const canvas=document.getElementById('chart-bw');
-  if(!canvas)return;
-  const sorted=[...state.bodyweights].sort((a,b)=>new Date(a.date)-new Date(b.date));
-  if(sorted.length<2)return;
-
-  new Chart(canvas,{type:'line',data:{labels:sorted.map(b=>fmtDate(b.date)),datasets:[{data:sorted.map(b=>b.weight),borderColor:'#52b788',backgroundColor:'rgba(82,183,136,0.1)',fill:true,tension:.3,pointBackgroundColor:'#52b788',pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#a0a0a0',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#a0a0a0'},grid:{color:'#1a241a'}}}}});
 }
 
 // ============================================================
@@ -2107,44 +1608,13 @@ function attachEvents(){
         durEl.textContent=fmtDuration(dur);
       }
     },1000);
-    // Request wake lock to prevent screen dimming
-    requestWakeLock();
   }else{
     clearInterval(window._durInterval);
-    releaseWakeLock();
   }
+  // Keep the screen on for the whole of any session, released when it ends.
+  if(state.session)requestWakeLock();else releaseWakeLock();
+  ensureRunTicker();
 }
-
-// ============================================================
-// WAKE LOCK (prevent screen dimming during workout)
-// ============================================================
-let wakeLock=null;
-async function requestWakeLock(){
-  try{
-    if('wakeLock' in navigator){
-      wakeLock=await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release',()=>{wakeLock=null});
-    }
-  }catch(e){}
-}
-function releaseWakeLock(){
-  if(wakeLock){try{wakeLock.release()}catch(e){}}
-  wakeLock=null;
-}
-// Re-request wake lock and update timers when page becomes visible
-document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden){
-    if(state.subPage==='active-workout'){
-      requestWakeLock();
-      if(state.timerRunning)render();
-    }
-    if(state.intervalTimer&&state.intervalTimer.phase==='running'){
-      render();
-    }
-    // Check auto-stop
-    checkAutoStop();
-  }
-});
 
 // ============================================================
 // SESSION PERSISTENCE (IndexedDB, written after every change)
@@ -2172,9 +1642,10 @@ async function restoreSession(){
   try{
     if(!data.session)return;
 
-    // Check auto-stop (3 hours)
+    // Quick workouts auto-stop after 3 hours. Program sessions (a hike can
+    // run 2 h) stay open until you finish or discard them.
     const sessionStart=new Date(data.session.startTime).getTime();
-    if(Date.now()-sessionStart>3*60*60*1000){
+    if(data.session.kind!=='program'&&Date.now()-sessionStart>3*60*60*1000){
       state.session=data.session;
       state.session.endTime=new Date(sessionStart+3*60*60*1000).toISOString();
       finishWorkoutAuto();
@@ -2182,7 +1653,8 @@ async function restoreSession(){
     }
 
     state.session=data.session;
-    state.subPage=data.subPage||'active-workout';
+    state.subPage=data.subPage||(data.session.kind==='program'?'run':'active-workout');
+    if(data.session.kind==='program')return;  // its timer lives on the session; ensureRunTicker picks it up
 
     // Restore rest timer
     if(data.timerRunning&&data.timerStartedAt){
@@ -2213,13 +1685,20 @@ async function restoreSession(){
 }
 
 function checkAutoStop(){
-  if(state.session){
+  if(state.session&&state.session.kind!=='program'){
     const sessionStart=new Date(state.session.startTime).getTime();
     if(Date.now()-sessionStart>3*60*60*1000){
       finishWorkoutAuto();
     }
   }
 }
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible')return;
+  // Timers are clock-based, so a re-render is all it takes to show the right time.
+  if(state.session&&state.session.kind!=='program'&&(state.timerRunning||(state.intervalTimer&&state.intervalTimer.phase==='running')))render();
+  checkAutoStop();
+});
 
 // ============================================================
 // FIREBASE DATA BACKUP & RESTORE
@@ -2232,7 +1711,7 @@ function backupToFirebase(){
   const ref=fbDb.ref('users/'+currentUser);
   const data={
     workouts:{},templates:{},templatesArchive:{},bodyweights:{},goals:{},
-    settings:{defaultRestTime:state.defaultRestTime},
+    settings:{defaultRestTime:state.defaultRestTime,program:state.program,alerts:{...alertPrefs}},
     lastBackup:Date.now()
   };
   for(const w of state.workouts)data.workouts[w.id]=w;
@@ -2275,6 +1754,10 @@ async function restoreFromFirebase(){
       if(goals.length>0)restored=true;
       console.log('[Restore] '+goals.length+' goals from Firebase');
     }
+    if(data.settings&&data.settings.program&&!(await dbGet('settings','program'))){
+      state.program={...JSON.parse(JSON.stringify(DEFAULT_PROGRAM)),...data.settings.program};
+      await dbPut('settings',state.program);restored=true;
+    }
     if(data.settings&&data.settings.defaultRestTime){
       state.defaultRestTime=data.settings.defaultRestTime;
       await dbPut('settings',{key:'defaultRestTime',value:data.settings.defaultRestTime});
@@ -2290,6 +1773,20 @@ async function restoreFromFirebase(){
 // ============================================================
 // INIT
 // ============================================================
+async function seedProgramTemplates(){
+  const ids=Object.keys(SESSION_META);
+  const wk=weekAt(0,state.program);
+  for(const old of state.templates)if(!ids.includes(old.id))await dbDelete('templates',old.id);
+  const seeded=[];
+  for(const id of ids){
+    const sess=buildSession(id,wk,state.program);
+    const t={id,name:sess.name,program:true,category:sess.cat,
+      exercises:sess.steps.flatMap(st=>st.exs.map(e=>({exerciseId:e.exerciseId,name:e.name,body:e.body,equip:e.equip,isCardio:e.isCardio,kind:st.kind})))};
+    seeded.push(t);await dbPut('templates',t);
+  }
+  state.templates=seeded;
+}
+
 async function initApp(){
   await openDB();
 
@@ -2304,6 +1801,25 @@ async function initApp(){
 
   const restSetting=await dbGet('settings','defaultRestTime');
   if(restSetting)state.defaultRestTime=restSetting.value;
+
+  // Program settings (weights, calendar), alert toggles, backup reminders
+  const prog=await dbGet('settings','program');
+  const base=JSON.parse(JSON.stringify(DEFAULT_PROGRAM));
+  state.program=prog?{...base,...prog,W:{...base.W,...prog.W},acc:{...base.acc,...prog.acc},accReady:{...(prog.accReady||{})}}:base;
+  const alerts=await dbGet('settings','alerts');
+  if(alerts)Object.assign(alertPrefs,alerts.value);
+  const lastExport=await dbGet('settings','lastExport');
+  state.lastExport=lastExport?lastExport.value:null;
+  state.backups=(await dbGetAll('backups')).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  state.pendingBackup=state.backups.find(b=>!b.acknowledged&&b.fromVersion<3)||null;
+
+  // The program's sessions are the only templates (the engine fills in each week's numbers).
+  await seedProgramTemplates();
+
+  // Ask the browser not to evict our data under storage pressure.
+  if(navigator.storage&&navigator.storage.persist){
+    try{state.storagePersisted=await navigator.storage.persisted()||await navigator.storage.persist()}catch(e){}
+  }
 
   // Restore an in-progress session (survives reloads and crashes)
   await restoreSession();
@@ -2324,7 +1840,4 @@ async function initApp(){
   render();
 }
 
-initApp();
 
-// Register service worker
-if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(()=>{})}
