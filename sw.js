@@ -1,5 +1,5 @@
 const CACHE_NAME = 'liftinstuff-v2';
-const ASSETS = ['./index.html', './manifest.json'];
+const ASSETS = ['./index.html', './manifest.json', './css/styles.css', './js/firebase-config.js', './js/app.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
