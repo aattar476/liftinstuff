@@ -21,17 +21,6 @@ function initFirebase(){
 }
 
 // ============================================================
-// DATABASE (IndexedDB)
-// ============================================================
-const DB_NAME='LiftinStuff_'+currentUser;const DB_VER=2;
-let db;
-function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('exercises'))d.createObjectStore('exercises',{keyPath:'id'});if(!d.objectStoreNames.contains('templates'))d.createObjectStore('templates',{keyPath:'id'});if(!d.objectStoreNames.contains('workouts'))d.createObjectStore('workouts',{keyPath:'id'});if(!d.objectStoreNames.contains('bodyweight'))d.createObjectStore('bodyweight',{keyPath:'date'});if(!d.objectStoreNames.contains('settings'))d.createObjectStore('settings',{keyPath:'key'});if(!d.objectStoreNames.contains('goals'))d.createObjectStore('goals',{keyPath:'id'})};r.onsuccess=e=>{db=e.target.result;res(db)};r.onerror=e=>rej(e)})}
-function dbPut(store,data){return new Promise((res,rej)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).put(data);tx.oncomplete=()=>res();tx.onerror=e=>rej(e)})}
-function dbGet(store,key){return new Promise((res,rej)=>{const tx=db.transaction(store,'readonly');const r=tx.objectStore(store).get(key);r.onsuccess=()=>res(r.result);r.onerror=e=>rej(e)})}
-function dbGetAll(store){return new Promise((res,rej)=>{const tx=db.transaction(store,'readonly');const r=tx.objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=e=>rej(e)})}
-function dbDelete(store,key){return new Promise((res,rej)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).delete(key);tx.oncomplete=()=>res();tx.onerror=e=>rej(e)})}
-
-// ============================================================
 // EXERCISE LIBRARY
 // ============================================================
 const BODY_PARTS=['Chest','Back','Shoulders','Biceps','Triceps','Quads','Hamstrings','Glutes','Calves','Core','Forearms','Cardio'];
@@ -262,7 +251,7 @@ let state={
   // filters
   libBodyFilter:'All',libEquipFilter:'All',libSearch:'',
   // templates
-  templates:[],
+  templates:[],templatesArchive:[],
   // history
   workouts:[],
   // bodyweight
@@ -1882,7 +1871,7 @@ function confirmEndWorkout(){
     state.session=null;state.subPage=null;
     state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
     state.intervalTimer=null;clearInterval(state.intervalTimerInterval);
-    localStorage.removeItem('liftinstuff_active_session');
+    dbDelete('activeSession','current').catch(()=>{});
     render();
   }
 }
@@ -1903,7 +1892,7 @@ async function finishWorkout(){
   backupToFirebase();
 
   state.session=null;state.subPage=null;
-  localStorage.removeItem('liftinstuff_active_session');
+  dbDelete('activeSession','current').catch(()=>{});
   render();
 }
 
@@ -1918,7 +1907,7 @@ async function finishWorkoutAuto(){
   clearInterval(state.timerInterval);
   state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
   state.intervalTimer=null;clearInterval(state.intervalTimerInterval);
-  localStorage.removeItem('liftinstuff_active_session');
+  dbDelete('activeSession','current').catch(()=>{});
   render();
 }
 
@@ -2039,25 +2028,20 @@ async function saveSettings(){
 }
 
 // Export/Import
-function exportData(){
-  const data={workouts:state.workouts,templates:state.templates,bodyweights:state.bodyweights,settings:{defaultRestTime:state.defaultRestTime}};
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download='liftinstuff-backup.json';a.click();
-  URL.revokeObjectURL(url);
+async function exportData(){
+  const exp=await exportAllData();
+  downloadJSON(exp,'liftinstuff-backup-'+dayKey(new Date())+'.json');
+  await dbPut('settings',{key:'lastExport',value:exp.exportedAt});
+  state.lastExport=exp.exportedAt;render();
 }
 
 async function importData(e){
   const file=e.target.files[0];if(!file)return;
   try{
-    const text=await file.text();
-    const data=JSON.parse(text);
-    if(data.workouts){state.workouts=data.workouts;for(const w of data.workouts)await dbPut('workouts',w)}
-    if(data.templates){state.templates=data.templates;for(const t of data.templates)await dbPut('templates',t)}
-    if(data.bodyweights){state.bodyweights=data.bodyweights;for(const b of data.bodyweights)await dbPut('bodyweight',b)}
-    if(data.settings?.defaultRestTime){state.defaultRestTime=data.settings.defaultRestTime;await dbPut('settings',{key:'defaultRestTime',value:data.settings.defaultRestTime})}
-    backupToFirebase();
-    alert('Data imported successfully!');render();
+    const parsed=normalizeImport(JSON.parse(await file.text()));
+    if(!confirm('Replace data on this phone with '+((parsed.stores.workouts||[]).length)+' workouts from this file?'))return;
+    await replaceStores(parsed.stores);
+    alert('Data imported. Reloading.');location.reload();
   }catch(err){alert('Error importing data: '+err.message)}
 }
 
@@ -2163,7 +2147,7 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 // ============================================================
-// SESSION PERSISTENCE (localStorage)
+// SESSION PERSISTENCE (IndexedDB, written after every change)
 // ============================================================
 function saveSession(){
   if(state.session){
@@ -2176,17 +2160,16 @@ function saveSession(){
       subPage:state.subPage,
       intervalTimer:state.intervalTimer
     };
-    localStorage.setItem('liftinstuff_active_session',JSON.stringify(data));
+    dbPut('activeSession',{key:'current',...JSON.parse(JSON.stringify(data))}).catch(e=>console.warn('[Session] save failed',e));
   }else{
-    localStorage.removeItem('liftinstuff_active_session');
+    dbDelete('activeSession','current').catch(()=>{});
   }
 }
 
-function restoreSession(){
-  const saved=localStorage.getItem('liftinstuff_active_session');
-  if(!saved)return;
+async function restoreSession(){
+  const data=await dbGet('activeSession','current');
+  if(!data)return;
   try{
-    const data=JSON.parse(saved);
     if(!data.session)return;
 
     // Check auto-stop (3 hours)
@@ -2224,7 +2207,8 @@ function restoreSession(){
       }
     }
   }catch(e){
-    localStorage.removeItem('liftinstuff_active_session');
+    console.warn('[Session] restore failed',e);
+    dbDelete('activeSession','current').catch(()=>{});
   }
 }
 
@@ -2247,12 +2231,13 @@ function backupToFirebase(){
   if(!fbDb||!currentUser)return;
   const ref=fbDb.ref('users/'+currentUser);
   const data={
-    workouts:{},templates:{},bodyweights:{},goals:{},
+    workouts:{},templates:{},templatesArchive:{},bodyweights:{},goals:{},
     settings:{defaultRestTime:state.defaultRestTime},
     lastBackup:Date.now()
   };
   for(const w of state.workouts)data.workouts[w.id]=w;
   for(const t of state.templates)data.templates[t.id]=t;
+  for(const t of state.templatesArchive)data.templatesArchive[t.id]=t;
   for(const b of state.bodyweights)data.bodyweights[b.date]=b;
   for(const g of state.goals)data.goals[g.id]=g;
   ref.set(data).then(()=>console.log('[Backup] Synced to Firebase')).catch(e=>console.warn('[Backup] Failed:',e));
@@ -2273,11 +2258,10 @@ async function restoreFromFirebase(){
       if(workouts.length>0)restored=true;
       console.log('[Restore] '+workouts.length+' workouts from Firebase');
     }
-    if(data.templates&&state.templates.length===0){
-      const templates=Object.values(data.templates);
-      for(const t of templates){state.templates.push(t);await dbPut('templates',t)}
-      if(templates.length>0)restored=true;
-      console.log('[Restore] '+templates.length+' templates from Firebase');
+    // Program templates are built in, so cloud templates only ever go to the archive.
+    if(data.templatesArchive||data.templates){
+      const archived=Object.values(data.templatesArchive||data.templates);
+      for(const t of archived)await dbPut('templatesArchive',t);
     }
     if(data.bodyweights&&state.bodyweights.length===0){
       const bws=Object.values(data.bodyweights);
@@ -2306,44 +2290,6 @@ async function restoreFromFirebase(){
 // ============================================================
 // INIT
 // ============================================================
-// ============================================================
-// DEFAULT TEMPLATES (from Drew's program)
-// ============================================================
-const DEFAULT_TEMPLATES=[
-  {id:'dt1',name:'Day 1 - Upper',exercises:[
-    {exerciseId:'b18',name:'Pull-Up',body:'Back',equip:'Bodyweight',sets:[{weight:0,reps:6},{weight:0,reps:6},{weight:0,reps:6}]},
-    {exerciseId:'c18',name:'Dip (Chest)',body:'Chest',equip:'Bodyweight',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'c5',name:'Flat Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'b6',name:'Dumbbell Row',body:'Back',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'s6',name:'Dumbbell Shoulder Press',body:'Shoulders',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'s8',name:'Lateral Raise',body:'Shoulders',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'cd20',name:'4x4 Cardio on Rower',body:'Cardio',equip:'Cardio Machine',isCardio:true,durationMin:35,sets:[]},
-  ]},
-  {id:'dt2',name:'Day 2 - Lower',exercises:[
-    {exerciseId:'q1',name:'Barbell Back Squat',body:'Quads',equip:'Barbell',sets:[{weight:0,reps:6},{weight:0,reps:6},{weight:0,reps:6},{weight:0,reps:6}]},
-    {exerciseId:'q3',name:'Barbell Lunge',body:'Quads',equip:'Barbell',sets:[{weight:0,reps:8},{weight:0,reps:8},{weight:0,reps:8},{weight:0,reps:8}]},
-    {exerciseId:'h1',name:'Romanian Deadlift',body:'Hamstrings',equip:'Barbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'q7',name:'Dumbbell Step-Up',body:'Quads',equip:'Dumbbell',sets:[{weight:0,reps:8},{weight:0,reps:8},{weight:0,reps:8}]},
-    {exerciseId:'q8',name:'Dumbbell Bulgarian Split Squat',body:'Quads',equip:'Dumbbell',sets:[{weight:0,reps:8},{weight:0,reps:8},{weight:0,reps:8}]},
-    {exerciseId:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true,durationMin:30,sets:[]},
-  ]},
-  {id:'dt3',name:'Day 3 - Upper',exercises:[
-    {exerciseId:'b18',name:'Pull-Up',body:'Back',equip:'Bodyweight',sets:[{weight:0,reps:0},{weight:0,reps:0},{weight:0,reps:0}]},
-    {exerciseId:'c18',name:'Dip (Chest)',body:'Chest',equip:'Bodyweight',sets:[{weight:0,reps:0},{weight:0,reps:0},{weight:0,reps:0}]},
-    {exerciseId:'c6',name:'Incline Dumbbell Press',body:'Chest',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'b6',name:'Dumbbell Row',body:'Back',equip:'Dumbbell',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'b10',name:'Lat Pulldown',body:'Back',equip:'Cable',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'cd20',name:'4x4 Cardio on Rower',body:'Cardio',equip:'Cardio Machine',isCardio:true,durationMin:35,sets:[]},
-  ]},
-  {id:'dt4',name:'Day 4 - Lower',exercises:[
-    {exerciseId:'s24',name:'Hang Clean',body:'Shoulders',equip:'Barbell',sets:[{weight:0,reps:3},{weight:0,reps:3},{weight:0,reps:3},{weight:0,reps:3}]},
-    {exerciseId:'b4',name:'Deadlift',body:'Back',equip:'Barbell',sets:[{weight:0,reps:5},{weight:0,reps:5},{weight:0,reps:5}]},
-    {exerciseId:'h3',name:'Back Extension',body:'Hamstrings',equip:'Bodyweight',sets:[{weight:0,reps:10},{weight:0,reps:10},{weight:0,reps:10}]},
-    {exerciseId:'q14',name:'Pistol Squat',body:'Quads',equip:'Bodyweight',sets:[{weight:0,reps:5},{weight:0,reps:5},{weight:0,reps:5}]},
-    {exerciseId:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true,durationMin:30,sets:[]},
-  ]},
-];
-
 async function initApp(){
   await openDB();
 
@@ -2351,6 +2297,7 @@ async function initApp(){
   customExercises=await dbGetAll('exercises');
 
   state.templates=await dbGetAll('templates');
+  state.templatesArchive=await dbGetAll('templatesArchive');
   state.workouts=await dbGetAll('workouts');
   state.bodyweights=await dbGetAll('bodyweight');
   state.goals=await dbGetAll('goals');
@@ -2358,23 +2305,13 @@ async function initApp(){
   const restSetting=await dbGet('settings','defaultRestTime');
   if(restSetting)state.defaultRestTime=restSetting.value;
 
-  // Seed default templates on first launch
-  const seeded=await dbGet('settings','templatesSeeded');
-  if(!seeded&&state.templates.length===0){
-    for(const t of DEFAULT_TEMPLATES){
-      state.templates.push(t);
-      await dbPut('templates',t);
-    }
-    await dbPut('settings',{key:'templatesSeeded',value:true});
-  }
-
-  // Restore active session from localStorage
-  restoreSession();
+  // Restore an in-progress session (survives reloads and crashes)
+  await restoreSession();
 
   // Init Firebase, then restore from cloud if local is empty, or backup if local has data
   initFirebase();
   if(fbDb){
-    const hasLocalData=state.workouts.length>0||state.templates.length>0;
+    const hasLocalData=state.workouts.length>0;
     if(!hasLocalData){
       restoreFromFirebase().then(restored=>{
         if(restored)render();
