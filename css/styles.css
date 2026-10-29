@@ -285,6 +285,7 @@ details.card summary{min-height:var(--tap);display:flex;align-items:center;curso
 /* ---------- modal sheet ---------- */
 .modal-overlay{position:fixed;inset:0;background:color-mix(in srgb,var(--ink) 55%,transparent);z-index:100;display:flex;align-items:flex-end;justify-content:center}
 .modal{background:var(--surface);border-top:4px solid var(--accent);padding:20px max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));width:100%;max-width:640px;max-height:88vh;overflow-y:auto;animation:slideUp .2s ease}
+.picker-modal{height:85vh;display:flex;flex-direction:column;overflow:hidden}
 .modal-title{font-family:var(--f-display);font-size:1.6rem;font-weight:600;text-transform:uppercase;margin-bottom:10px;line-height:1.05}
 @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 

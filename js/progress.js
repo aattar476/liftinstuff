@@ -144,6 +144,7 @@ function renderMore(){
     </section>
     <section><h2>Other training</h2>
       <button class="list-row" onclick="beginWorkoutSetup(null)"><span><b>Quick workout</b><i>Log anything outside the program</i></span><span>›</span></button>
+      <button class="list-row" onclick="openNorwegian()"><span><b>Norwegian 4×4 timer</b><i>Warm-up, 4 × 4 min hard / 3 min easy, cool-down. Saves to history.</i></span><span>›</span></button>
       <button class="list-row" onclick="setState({subPage:'goals'})"><span><b>Goals</b><i>Week, month and quarter targets</i></span><span>›</span></button>
       <button class="list-row" onclick="setState({subPage:'library'})"><span><b>Exercise library</b><i>${getAllExercises().length} exercises</i></span><span>›</span></button>
       <label class="field"><span>Rest timer for quick workouts</span><span class="field-in"><input type="number" inputmode="numeric" data-sid="rest-default" value="${state.defaultRestTime}" onchange="saveRestDefault(this.value)"><span class="unit">s</span></span></label>

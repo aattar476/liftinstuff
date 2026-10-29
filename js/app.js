@@ -232,6 +232,9 @@ const EXERCISES=[
 {id:'cd19',name:'Ski Erg',body:'Cardio',equip:'Cardio Machine',isCardio:true},
 {id:'cd20',name:'4x4 Cardio on Rower',body:'Cardio',equip:'Cardio Machine',isCardio:true},
 {id:'cd21',name:'Zone 2 Cardio on Stairs',body:'Cardio',equip:'Cardio Machine',isCardio:true},
+{id:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,isInterval:true},
+{id:'q40',name:'Box Jump',body:'Quads',equip:'Bodyweight'},
+{id:'b40',name:'Back Extension',body:'Back',equip:'Bodyweight'},
 ];
 
 function getAllExercises(){return [...EXERCISES,...PROGRAM_EXERCISES,...customExercises]}
@@ -379,6 +382,7 @@ function getTimerRemaining(){
 
 function isStepExercise(name){return /stair|climber|step/i.test(name)}
 function isDistExercise(name){return /run|row|bike|cycle|elliptical|ski.?erg/i.test(name)}
+function isSpeedExercise(name){return /treadmill/i.test(name)}
 
 function getStreak(){
   if(state.workouts.length===0)return 0;
@@ -460,7 +464,7 @@ function renderHeader(){
     case 'workout-setup':return back('cancelWorkoutSetup()','Quick workout');
     case 'workout-detail':return back('goBackFromDetail()','Session',`<button class="header-btn" onclick="editPastWorkout('${state._viewWorkoutId}')">Edit</button>`);
     case 'edit-past-workout':return back("setState({subPage:'workout-detail'})",'Edit session',`<button class="header-btn" onclick="savePastWorkout()">Save</button>`);
-    case 'interval-timer':{const it=state.intervalTimer;if(it&&(it.phase==='running'||it.phase==='paused'))return '';return back('cancelIntervalTimer()','4×4 timer')}
+    case 'interval-timer':{const it=state.intervalTimer;if(it&&(it.phase==='running'||it.phase==='paused'))return '';return back('cancelIntervalTimer()','Interval timer')}
     case 'preview':return back('setState({subPage:null})','Session');
     case 'program':return back("setState({subPage:null})",'Program');
     case 'next-cycle':return back("setState({subPage:state.tab==='more'?null:null,_cycleDraft:null})",'Next cycle');
@@ -876,8 +880,8 @@ function renderActiveWorkout(){
               <div class="set-row">
                 <div class="set-num">#</div>
                 <div class="set-label" style="width:60px">MIN</div>
-                ${isStepExercise(ex.name)?'<div class="set-label" style="width:60px">SPM</div>':''}
-                ${isDistExercise(ex.name)?'<div class="set-label" style="width:60px">DIST</div>':''}
+                ${isSpeedExercise(ex.name)?'<div class="set-label" style="width:60px">MPH</div>':''}${isStepExercise(ex.name)&&!isSpeedExercise(ex.name)?'<div class="set-label" style="width:60px">SPM</div>':''}
+                ${isDistExercise(ex.name)&&!isSpeedExercise(ex.name)&&!isStepExercise(ex.name)?'<div class="set-label" style="width:60px">DIST</div>':''}
                 <div class="set-label" style="width:60px">CAL</div>
                 <div style="width:36px"></div>
               </div>
@@ -885,8 +889,8 @@ function renderActiveWorkout(){
                 <div class="set-row">
                   <div class="set-num">${si+1}</div>
                   <input class="set-input" style="width:60px" data-sid="cm-${i}-${si}" type="number" inputmode="numeric" value="${set.reps||''}" placeholder="0" onchange="updateSet(${i},${si},'reps',this.value)">
-                  ${isStepExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cs-${i}-${si}" type="number" inputmode="numeric" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
-                  ${isDistExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cd-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  ${isSpeedExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cmph-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}${isStepExercise(ex.name)&&!isSpeedExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cs-${i}-${si}" type="number" inputmode="numeric" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
+                  ${isDistExercise(ex.name)&&!isSpeedExercise(ex.name)&&!isStepExercise(ex.name)?`<input class="set-input" style="width:60px" data-sid="cd-${i}-${si}" type="number" inputmode="decimal" value="${set.weight||''}" placeholder="0" onchange="updateSet(${i},${si},'weight',this.value)">`:''}
                   <input class="set-input" style="width:60px" data-sid="cc-${i}-${si}" type="number" inputmode="numeric" value="${set.calories||''}" placeholder="0" onchange="updateSet(${i},${si},'calories',this.value)">
                   <button class="set-check ${set.done?'done':''}" onclick="event.stopPropagation();toggleSet(${i},${si})">${set.done?icons.check:''}</button>
                 </div>`).join('')}
@@ -1033,12 +1037,12 @@ function renderModals(){
 
   return `
     <div class="modal-overlay" onclick="closePicker(event)">
-      <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal picker-modal" onclick="event.stopPropagation()">
         <div class="flex-between mb-12"><span class="modal-title" style="margin:0">Add Exercise</span><button style="font-size:24px;color:var(--text2)" onclick="setState({showExercisePicker:false})">×</button></div>
         <div class="search-bar">${icons.search}<input type="text" data-sid="picker-search" placeholder="Search..." value="${state.libSearch}" oninput="debouncedSearch('libSearch',this.value)"></div>
         <div class="filter-row">${['All',...BODY_PARTS].map(bp=>`<button class="filter-chip ${state.libBodyFilter===bp?'active':''}" onclick="setState({libBodyFilter:'${bp}'})">${bp}</button>`).join('')}</div>
         <div class="filter-row">${['All',...EQUIPMENT].map(eq=>`<button class="filter-chip ${state.libEquipFilter===eq?'active':''}" onclick="setState({libEquipFilter:'${eq}'})">${eq}</button>`).join('')}</div>
-        <div id="picker-results" style="max-height:50vh;overflow-y:auto">
+        <div id="picker-results" style="flex:1;min-height:0;overflow-y:auto">
           ${filtered.map(ex=>`
             <div class="exercise-item" onclick="pickExercise('${ex.id}')">
               <div class="exercise-info"><div class="exercise-name">${ex.name}</div><div class="exercise-meta">${ex.body} · ${ex.equip}</div></div>
@@ -1085,7 +1089,7 @@ async function saveCustomExercise(){
 // MET-based estimates: calories = MET * bodyWeightKg * durationHours
 // For lifting: ~3-6 MET depending on intensity. We use set duration estimate.
 // For cardio: ~6-12 MET depending on type.
-const CARDIO_METS={'Treadmill Run':9.8,'Treadmill Walk (Incline)':6,'Treadmill Sprint Intervals':11,'Assault Bike':10.5,'Assault Bike Intervals':12,'Rowing Machine':7,'Rowing Intervals':9.5,'Stair Climber':9,'Stair Climber (Zone 2)':6.5,'Stationary Bike':7.5,'Stationary Bike Intervals':10,'Elliptical':5.5,'Outdoor Run':9.8,'Outdoor Sprint Intervals':11,'Jump Rope':11,'Battle Ropes':10,'Box Jumps':8,'Burpees':10,'Ski Erg':7.5,'4x4 Cardio on Rower':8.5,'Zone 2 Cardio on Stairs':6.5};
+const CARDIO_METS={'Treadmill Run':9.8,'Treadmill Walk (Incline)':6,'Treadmill Sprint Intervals':11,'Assault Bike':10.5,'Assault Bike Intervals':12,'Rowing Machine':7,'Rowing Intervals':9.5,'Stair Climber':9,'Stair Climber (Zone 2)':6.5,'Stationary Bike':7.5,'Stationary Bike Intervals':10,'Elliptical':5.5,'Outdoor Run':9.8,'Outdoor Sprint Intervals':11,'Jump Rope':11,'Battle Ropes':10,'Box Jumps':8,'Burpees':10,'Ski Erg':7.5,'4x4 Cardio on Rower':8.5,'Zone 2 Cardio on Stairs':6.5,'Norwegian 4x4':9.5};
 function estimateCalories(exercise,bodyWeightLbs){
   const bwKg=(bodyWeightLbs||180)*0.4536;
   if(exercise.isCardio){
@@ -1167,107 +1171,167 @@ function launchWorkout(){
 }
 
 // ============================================================
-// INTERVAL TIMER
+// INTERVAL TIMER (4×4, Norwegian 4×4, 30/30, Tabata)
 // ============================================================
+// Phases: optional warm-up → rounds of work/recovery → optional cool-down.
+// Clock-based like every other timer: if the phone was locked through one or
+// more phase changes, the tick catches up through all of them at once.
 const INTERVAL_PRESETS={
-  '4x4':{activeSeconds:240,restSeconds:180,rounds:4,label:'4x4'},
-  '30/30':{activeSeconds:30,restSeconds:30,rounds:10,label:'30/30'},
-  'tabata':{activeSeconds:20,restSeconds:10,rounds:8,label:'Tabata'},
+  'norwegian':{warmupSeconds:300,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:300,hrWork:'~90% (165)',hrRecovery:'60-70%',hrWarmup:'easy (~120)',label:'Norwegian 4×4'},
+  '4x4':{warmupSeconds:0,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:0,label:'4x4'},
+  '30/30':{warmupSeconds:0,activeSeconds:30,restSeconds:30,rounds:10,cooldownSeconds:0,label:'30/30'},
+  'tabata':{warmupSeconds:0,activeSeconds:20,restSeconds:10,rounds:8,cooldownSeconds:0,label:'Tabata'},
 };
+const CARDIO_MODALITIES=['Rower','Stairs','Assault Bike','Stationary Bike','Treadmill','Ski Erg','Outdoor Run','Elliptical'];
 
-function openIntervalTimer(exIdx){
-  state.intervalTimer={
-    activeSeconds:240,restSeconds:180,rounds:4,
+function newIntervalState(extra){
+  return Object.assign({
+    warmupSeconds:0,activeSeconds:240,restSeconds:180,rounds:4,cooldownSeconds:0,
+    hrWork:'',hrRecovery:'',hrWarmup:'',modality:'',
     phase:'config',currentPhase:'active',currentRound:1,
     phaseStartedAt:null,phasePausedAccum:0,
-    completedActiveTime:0,completedRestTime:0,
-    exerciseIdx:exIdx,preset:'4x4'
-  };
+    completedWarmupTime:0,completedActiveTime:0,completedRestTime:0,completedCooldownTime:0,
+    exerciseIdx:null,preset:'4x4'
+  },extra||{});
+}
+
+function applyPresetFields(it,key){
+  const p=INTERVAL_PRESETS[key];if(!p)return;
+  it.warmupSeconds=p.warmupSeconds||0;it.activeSeconds=p.activeSeconds;it.restSeconds=p.restSeconds;
+  it.rounds=p.rounds;it.cooldownSeconds=p.cooldownSeconds||0;
+  it.hrWork=p.hrWork||'';it.hrRecovery=p.hrRecovery||'';it.hrWarmup=p.hrWarmup||'';
+  it.preset=key;
+}
+
+function openIntervalTimer(exIdx,forcePreset){
+  const it=newIntervalState({exerciseIdx:(exIdx==null?null:exIdx)});
+  let preset=forcePreset||'4x4';
+  if(!forcePreset&&exIdx!=null&&state.session&&state.session.exercises[exIdx]){
+    const sx=state.session.exercises[exIdx];
+    const exData=getAllExercises().find(e=>e.id===sx.exerciseId);
+    if((exData&&exData.isInterval)||/norwegian/i.test(sx.name||''))preset='norwegian';
+  }
+  applyPresetFields(it,preset);
+  state.intervalTimer=it;
   state.subPage='interval-timer';
   render();
 }
 
+// Standalone Norwegian 4×4 (from the More tab): logs itself to history when done.
+function openNorwegian(){
+  const it=newIntervalState({exerciseIdx:null,modality:'Rower'});
+  applyPresetFields(it,'norwegian');
+  state.intervalTimer=it;
+  state.subPage='interval-timer';
+  render();
+}
+
+function setIntervalModality(v){if(state.intervalTimer)state.intervalTimer.modality=v}
+
 function cancelIntervalTimer(){
   clearInterval(state.intervalTimerInterval);
+  releaseWakeLock();
   state.intervalTimer=null;
-  state.subPage='active-workout';
+  state.subPage=state.session?'active-workout':null;
   saveSession();
   render();
 }
 
 function applyIntervalPreset(key){
   if(!state.intervalTimer)return;
-  if(key==='custom'){
-    state.intervalTimer.preset='custom';
-  }else{
-    const p=INTERVAL_PRESETS[key];
-    state.intervalTimer.activeSeconds=p.activeSeconds;
-    state.intervalTimer.restSeconds=p.restSeconds;
-    state.intervalTimer.rounds=p.rounds;
-    state.intervalTimer.preset=key;
-  }
+  if(key==='custom')state.intervalTimer.preset='custom';
+  else applyPresetFields(state.intervalTimer,key);
   render();
+}
+
+// A lock-screen notification at each phase change, if the phone allows it.
+function requestNotifyPermission(){
+  try{if('Notification' in window&&Notification.permission==='default')Notification.requestPermission().catch(()=>{})}catch(e){}
+}
+function notifyInterval(title,body){
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted')return;
+    const fallback=()=>{try{new Notification(title,{body:body||''})}catch(e){}};
+    if(navigator.serviceWorker&&navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(reg=>reg.showNotification(title,{body:body||'',tag:'liftinstuff-interval',renotify:true})).catch(fallback);
+    }else fallback();
+  }catch(e){}
 }
 
 function startIntervalTimer(){
   const it=state.intervalTimer;if(!it)return;
   unlockAudio();
-  it.phase='running';it.currentPhase='active';it.currentRound=1;
+  it.phase='running';
+  it.currentPhase=it.warmupSeconds>0?'warmup':'active';
+  it.currentRound=1;
   it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-  it.completedActiveTime=0;it.completedRestTime=0;
+  it.completedWarmupTime=0;it.completedActiveTime=0;it.completedRestTime=0;it.completedCooldownTime=0;
   clearInterval(state.intervalTimerInterval);
-  state.intervalTimerInterval=setInterval(intervalTimerTick,200);
+  requestNotifyPermission();
   requestWakeLock();
+  state.intervalTimerInterval=setInterval(intervalTimerTick,200);
+  alertRound();
   saveSession();
   render();
 }
 
+function _phaseDurSec(it){
+  if(it.currentPhase==='warmup')return it.warmupSeconds;
+  if(it.currentPhase==='cooldown')return it.cooldownSeconds;
+  if(it.currentPhase==='active')return it.activeSeconds;
+  return it.restSeconds;
+}
+
 function getIntervalPhaseRemaining(){
   const it=state.intervalTimer;if(!it||it.phase==='config'||it.phase==='done')return 0;
-  const phaseDur=it.currentPhase==='active'?it.activeSeconds:it.restSeconds;
   const elapsed=it.phasePausedAccum+(it.phase==='running'&&it.phaseStartedAt?Date.now()-it.phaseStartedAt:0);
-  return Math.max(0,Math.ceil((phaseDur*1000-elapsed)/1000));
+  return Math.max(0,Math.ceil((_phaseDurSec(it)*1000-elapsed)/1000));
+}
+
+// Moves to the next phase; carryMs is how far past the end we already are.
+function _advanceIntervalPhase(it,carryMs){
+  const cp=it.currentPhase;let next=null;
+  if(cp==='warmup'){it.completedWarmupTime+=it.warmupSeconds;next='active'}
+  else if(cp==='active'){
+    it.completedActiveTime+=it.activeSeconds;
+    if(it.currentRound<it.rounds){if(it.restSeconds>0)next='rest';else{it.currentRound++;next='active'}}
+    else if(it.cooldownSeconds>0)next='cooldown';
+    else return 'done';
+  }else if(cp==='rest'){
+    it.completedRestTime+=it.restSeconds;
+    if(it.currentRound<it.rounds){it.currentRound++;next='active'}
+    else if(it.cooldownSeconds>0)next='cooldown';
+    else return 'done';
+  }else if(cp==='cooldown'){it.completedCooldownTime+=it.cooldownSeconds;return 'done'}
+  it.currentPhase=next;it.phaseStartedAt=Date.now();it.phasePausedAccum=carryMs||0;
+  saveSession();
+  return 'continue';
+}
+
+function _onIntervalPhaseEntered(it){
+  const labels={warmup:'Warm up',active:'Work — GO!',rest:'Recover',cooldown:'Cool down'};
+  const r=(it.currentPhase==='active'||it.currentPhase==='rest')?(' (Round '+it.currentRound+'/'+it.rounds+')'):'';
+  alertRound();
+  notifyInterval('LiftinStuff — '+(labels[it.currentPhase]||'')+r,it.modality||'');
 }
 
 function intervalTimerTick(){
   const it=state.intervalTimer;if(!it||it.phase!=='running')return;
-  const remaining=getIntervalPhaseRemaining();
-  if(remaining<=0){
-    // Phase complete
-    if(it.currentPhase==='active'){
-      it.completedActiveTime+=it.activeSeconds;
-      if(it.restSeconds>0){
-        it.currentPhase='rest';
-        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        alertRound();
-        saveSession();render();
-      }else{
-        // No rest, go to next round or done
-        if(it.currentRound<it.rounds){
-          it.currentRound++;it.currentPhase='active';
-          it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-          alertRound();
-          saveSession();render();
-        }else{
-          completeIntervalTimer();
-        }
-      }
-    }else{
-      it.completedRestTime+=it.restSeconds;
-      if(it.currentRound<it.rounds){
-        it.currentRound++;it.currentPhase='active';
-        it.phaseStartedAt=Date.now();it.phasePausedAccum=0;
-        alertRound();
-        saveSession();render();
-      }else{
-        completeIntervalTimer();
-      }
+  let transitioned=false,guard=0;
+  while(guard++<300){
+    const elapsed=it.phasePausedAccum+(it.phaseStartedAt?Date.now()-it.phaseStartedAt:0);
+    const remMs=_phaseDurSec(it)*1000-elapsed;
+    if(remMs>0){
+      if(transitioned){_onIntervalPhaseEntered(it);render();return}
+      const remaining=Math.ceil(remMs/1000);
+      const key=remaining+'-'+it.currentRound+it.currentPhase;
+      if(remaining<=3&&it._lastCount!==key){it._lastCount=key;alertCountdown(remaining)}
+      const tEl=document.getElementById('interval-time');
+      if(tEl)tEl.textContent=fmtTime(remaining);
+      return;
     }
-  }else{
-    if(remaining<=3&&it._lastCount!==remaining+'-'+it.currentRound+it.currentPhase){it._lastCount=remaining+'-'+it.currentRound+it.currentPhase;alertCountdown(remaining)}
-    // Update DOM directly
-    const tEl=document.getElementById('interval-time');
-    if(tEl)tEl.textContent=fmtTime(remaining);
+    if(_advanceIntervalPhase(it,-remMs)==='done'){completeIntervalTimer();return}
+    transitioned=true;
   }
 }
 
@@ -1294,23 +1358,55 @@ function completeIntervalTimer(){
   clearInterval(state.intervalTimerInterval);
   it.phase='done';
   alertEnd();
-  // Auto-fill cardio exercise MIN field
+  notifyInterval('LiftinStuff — Interval complete!',(it.rounds||'')+' rounds done'+(it.modality?' · '+it.modality:''));
+  releaseWakeLock();
   if(it.exerciseIdx!=null&&state.session&&state.session.exercises[it.exerciseIdx]){
+    // Auto-fill the cardio exercise's MIN field
     const ex=state.session.exercises[it.exerciseIdx];
     const activeMins=Math.round(it.completedActiveTime/60);
-    if(ex.sets&&ex.sets.length>0){
-      ex.sets[0].reps=activeMins;
-      ex.sets[0].done=true;
-    }
+    if(ex.sets&&ex.sets.length>0){ex.sets[0].reps=activeMins;ex.sets[0].done=true}
+  }else if(it.exerciseIdx==null&&!state.session){
+    it.loggedToHistory=true;
+    _logIntervalWorkout(it);
   }
   saveSession();render();
 }
 
+async function _logIntervalWorkout(it){
+  try{
+    const totalSec=(it.completedWarmupTime||0)+(it.completedActiveTime||0)+(it.completedRestTime||0)+(it.completedCooldownTime||0);
+    const totalMin=Math.max(1,Math.round(totalSec/60));
+    const end=new Date(),start=new Date(end.getTime()-totalSec*1000);
+    const p=INTERVAL_PRESETS[it.preset];
+    const label=it.preset==='norwegian'?'Norwegian 4×4':(p&&p.label?p.label+' Intervals':'Interval Session');
+    const workout={
+      id:uid(),
+      name:it.modality?label+' — '+it.modality:label,
+      startTime:start.toISOString(),endTime:end.toISOString(),currentExIdx:0,
+      exercises:[{exerciseId:'cd22',name:'Norwegian 4x4',body:'Cardio',equip:'Cardio Machine',isCardio:true,
+        sets:[{reps:totalMin,weight:0,calories:0,done:true}]}]
+    };
+    state.workouts.push(workout);
+    await dbPut('workouts',workout);
+    backupToFirebase();
+    render();
+  }catch(e){console.warn('[Interval] could not save to history',e)}
+}
+
 function endIntervalTimerAndReturn(){
   clearInterval(state.intervalTimerInterval);
+  releaseWakeLock();
   state.intervalTimer=null;
-  state.subPage='active-workout';
+  state.subPage=state.session?'active-workout':null;
   saveSession();render();
+}
+
+function minSecInputs(field){
+  const it=state.intervalTimer,v=it[field];
+  return `<div style="display:flex;align-items:center;gap:12px">
+    <input type="number" data-sid="it-${field}-m" value="${Math.floor(v/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.${field}=(parseInt(this.value)||0)*60+(state.intervalTimer.${field}%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
+    <input type="number" data-sid="it-${field}-s" value="${v%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.${field}=Math.floor(state.intervalTimer.${field}/60)*60+(parseInt(this.value)||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
+  </div>`;
 }
 
 function renderIntervalTimer(){
@@ -1319,27 +1415,31 @@ function renderIntervalTimer(){
 
   // CONFIG screen
   if(it.phase==='config'){
+    const isNor=it.preset==='norwegian';
     return `<div class="interval-config">
+      ${isNor?`<div class="card" style="border:1px solid var(--accent)">
+        <div class="card-title mb-4">Norwegian 4×4</div>
+        <div class="text-sm" style="color:var(--text2)">Warm-up → 4 × (4 min hard / 3 min easy) → cool-down</div>
+        <div class="text-sm mt-8" style="color:var(--text2)">Work HR ${esc(it.hrWork)} · Recovery ${esc(it.hrRecovery)}</div>
+      </div>`:''}
       <div class="card">
-        <div class="card-title mb-12">Active Period</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <input type="number" data-sid="it-active-m" value="${Math.floor(it.activeSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.activeSeconds=parseInt(this.value)*60+(state.intervalTimer.activeSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
-          <input type="number" data-sid="it-active-s" value="${it.activeSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.activeSeconds=Math.floor(state.intervalTimer.activeSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
-        </div>
+        <div class="card-title mb-12">Exercise / Modality</div>
+        <select onchange="setIntervalModality(this.value)" style="width:100%;min-height:48px;padding:10px;background:var(--bg);color:var(--ink);border:1px solid var(--line)">
+          <option value="">— none —</option>
+          ${CARDIO_MODALITIES.map(m=>`<option value="${m}" ${it.modality===m?'selected':''}>${m}</option>`).join('')}
+        </select>
       </div>
-      <div class="card">
-        <div class="card-title mb-12">Rest Period</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <input type="number" data-sid="it-rest-m" value="${Math.floor(it.restSeconds/60)}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=parseInt(this.value)*60+(state.intervalTimer.restSeconds%60);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">min</span>
-          <input type="number" data-sid="it-rest-s" value="${it.restSeconds%60}" style="width:60px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.restSeconds=Math.floor(state.intervalTimer.restSeconds/60)*60+parseInt(this.value||0);state.intervalTimer.preset='custom'"> <span class="text-sm" style="color:var(--text2)">sec</span>
-        </div>
-      </div>
+      <div class="card"><div class="card-title mb-12">Warm-up</div>${minSecInputs('warmupSeconds')}</div>
+      <div class="card"><div class="card-title mb-12">Active Period</div>${minSecInputs('activeSeconds')}</div>
+      <div class="card"><div class="card-title mb-12">Rest / Recovery</div>${minSecInputs('restSeconds')}</div>
+      <div class="card"><div class="card-title mb-12">Cool-down</div>${minSecInputs('cooldownSeconds')}</div>
       <div class="card">
         <div class="card-title mb-12">Rounds</div>
         <input type="number" data-sid="it-rounds" value="${it.rounds}" style="width:80px;text-align:center" inputmode="numeric" onchange="state.intervalTimer.rounds=parseInt(this.value)||1;state.intervalTimer.preset='custom'">
       </div>
       <div class="card-title mb-8">Presets</div>
       <div class="preset-row">
+        <button class="preset-btn ${it.preset==='norwegian'?'active':''}" onclick="applyIntervalPreset('norwegian')">Norwegian 4×4</button>
         <button class="preset-btn ${it.preset==='4x4'?'active':''}" onclick="applyIntervalPreset('4x4')">4x4</button>
         <button class="preset-btn ${it.preset==='30/30'?'active':''}" onclick="applyIntervalPreset('30/30')">30/30</button>
         <button class="preset-btn ${it.preset==='tabata'?'active':''}" onclick="applyIntervalPreset('tabata')">Tabata</button>
@@ -1351,28 +1451,36 @@ function renderIntervalTimer(){
 
   // DONE screen
   if(it.phase==='done'){
-    const totalActive=it.completedActiveTime;
-    const totalRest=it.completedRestTime;
-    const totalTime=totalActive+totalRest;
+    const totalActive=it.completedActiveTime,totalRest=it.completedRestTime;
+    const totalWarm=it.completedWarmupTime||0,totalCool=it.completedCooldownTime||0;
+    const totalTime=totalWarm+totalActive+totalRest+totalCool;
     return `<div class="interval-fs" style="background:var(--bg)">
       <div style="font-size:32px;font-weight:800;color:var(--green-bright);margin-bottom:24px">DONE!</div>
+      ${it.modality?`<div class="text-sm mb-8" style="color:var(--text2)">${esc(it.modality)}</div>`:''}
       <div class="text-sm mb-8" style="color:var(--text2)">${it.rounds} rounds completed</div>
+      ${it.loggedToHistory?'<div class="text-sm mb-8" style="color:var(--green-bright)">✓ Saved to history</div>':''}
       <div class="fw-700 mb-4" style="font-size:20px">${fmtTime(totalTime)} total time</div>
-      <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} active / ${fmtTime(totalRest)} rest</div>
-      <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">Save & Return to Workout</button>
+      <div class="text-sm mb-24" style="color:var(--text2)">${fmtTime(totalActive)} work / ${fmtTime(totalRest)} recovery${(totalWarm||totalCool)?` · ${fmtTime(totalWarm)} warm-up / ${fmtTime(totalCool)} cool-down`:''}</div>
+      <button class="if-btn" style="background:var(--green);color:#fff" onclick="endIntervalTimerAndReturn()">${state.session?'Save & Return to Workout':'Done'}</button>
     </div>`;
   }
 
   // RUNNING / PAUSED screen (fullscreen)
-  const isActive=it.currentPhase==='active';
+  const cp=it.currentPhase;
   const isPaused=it.phase==='paused';
   const remaining=getIntervalPhaseRemaining();
-  const bgColor=isPaused?'var(--surface)':isActive?'var(--accent)':'var(--bg)';
-  const textColor=isPaused?'var(--ink)':isActive?'var(--on-accent)':'var(--accent)';
+  const meta=({
+    warmup:{label:'WARM UP',bg:'var(--surface)',fg:'var(--yellow)',hr:it.hrWarmup},
+    active:{label:'GO',bg:'var(--accent)',fg:'var(--on-accent)',hr:it.hrWork},
+    rest:{label:'RECOVER',bg:'var(--bg)',fg:'var(--accent)',hr:it.hrRecovery},
+    cooldown:{label:'COOL DOWN',bg:'var(--surface)',fg:'var(--blue)',hr:it.hrWarmup},
+  })[cp]||{label:'GO',bg:'var(--accent)',fg:'var(--on-accent)',hr:''};
+  const roundTxt=(cp==='active'||cp==='rest')?`ROUND ${it.currentRound}/${it.rounds}`:meta.label;
+  const sub=[it.modality,meta.hr?`HR ${meta.hr}`:''].filter(Boolean).map(esc).join('  ·  ');
 
   if(isPaused){
-    return `<div class="interval-fs" style="background:${bgColor}">
-      <div class="if-round" style="color:var(--text2)">ROUND ${it.currentRound}/${it.rounds}</div>
+    return `<div class="interval-fs" style="background:var(--surface)">
+      <div class="if-round" style="color:var(--text2)">${roundTxt}</div>
       <div class="if-time" style="color:var(--text)">${fmtTime(remaining)}</div>
       <div class="if-label" style="color:var(--text2)">PAUSED</div>
       <div style="display:flex;gap:12px;margin-top:40px">
@@ -1382,11 +1490,12 @@ function renderIntervalTimer(){
     </div>`;
   }
 
-  return `<div class="interval-fs" style="background:${bgColor}">
-    <div class="if-round" style="color:${textColor}">${isActive?'ROUND':'REST'} ${it.currentRound}/${it.rounds}</div>
-    <div class="if-time" style="color:${textColor}" id="interval-time">${fmtTime(remaining)}</div>
-    <div class="if-label" style="color:${textColor}">${isActive?'GO':'REST'}</div>
-    <button class="if-btn" style="background:${isActive?'rgba(0,0,0,.2)':'rgba(255,255,255,.1)'};color:${textColor}" onclick="pauseIntervalTimer()">PAUSE</button>
+  return `<div class="interval-fs" style="background:${meta.bg}">
+    <div class="if-round" style="color:${meta.fg}">${roundTxt}</div>
+    <div class="if-time" style="color:${meta.fg}" id="interval-time">${fmtTime(remaining)}</div>
+    <div class="if-label" style="color:${meta.fg}">${meta.label}</div>
+    ${sub?`<div style="margin-top:8px;font-size:14px;font-weight:600;opacity:.85;color:${meta.fg}">${sub}</div>`:''}
+    <button class="if-btn" style="background:${cp==='active'?'rgba(0,0,0,.2)':'rgba(255,255,255,.12)'};color:${meta.fg}" onclick="pauseIntervalTimer()">PAUSE</button>
   </div>`;
 }
 
@@ -1696,7 +1805,8 @@ function checkAutoStop(){
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible')return;
   // Timers are clock-based, so a re-render is all it takes to show the right time.
-  if(state.session&&state.session.kind!=='program'&&(state.timerRunning||(state.intervalTimer&&state.intervalTimer.phase==='running')))render();
+  if(state.intervalTimer&&state.intervalTimer.phase==='running'){requestWakeLock();intervalTimerTick()}
+  if(state.session&&state.session.kind!=='program'&&state.timerRunning)render();
   checkAutoStop();
 });
 
