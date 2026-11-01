@@ -207,12 +207,24 @@ let _noteSave;
 function editNote(v){state.session.notes=v;clearTimeout(_noteSave);_noteSave=setTimeout(saveSession,400)}
 
 // ---- finish / discard ----
-function askFinish(){state._sheet='finish';render()}
+function askFinish(){
+  // Prefill the length with the time since starting; editable in the sheet
+  // (e.g. the session was left running overnight).
+  state._finishMin=Math.max(1,Math.round((Date.now()-new Date(state.session.startTime))/60000));
+  state._sheet='finish';render();
+}
+function setFinishLen(h,m){
+  const cur=state._finishMin||0;
+  const hh=h==null?Math.floor(cur/60):Math.max(0,parseInt(h)||0);
+  const mm=m==null?cur%60:Math.max(0,parseInt(m)||0);
+  state._finishMin=Math.max(1,hh*60+mm);
+}
 function closeSheet(){state._sheet=null;render()}
 function minimizeSession(){state.subPage=null;state.tab='today';render()}
 
-function sessionToWorkout(s){
-  const end=new Date();
+function sessionToWorkout(s,lenMin){
+  const start=new Date(s.startTime);
+  const end=lenMin?new Date(start.getTime()+lenMin*60000):new Date();
   const exercises=[];
   for(const step of s.steps)for(const e of step.exs){
     exercises.push({exerciseId:e.exerciseId,name:e.name,body:e.body,equip:e.equip,isCardio:!!e.isCardio,
@@ -220,13 +232,16 @@ function sessionToWorkout(s){
       durationMin:e.unit==='min'?(e.sets[0].done?e.sets[0].reps:0):undefined,
       sets:e.sets.map(x=>({weight:x.weight||0,reps:x.reps||0,secs:x.secs,done:!!x.done,pr:!!x.pr}))});
   }
-  return {id:s.id,name:s.name,startTime:s.startTime,endTime:end.toISOString(),
-    durationSec:Math.round((end-new Date(s.startTime))/1000),program:s.program,notes:s.notes||'',exercises,currentExIdx:0};
+  // JSON round trip drops undefined fields so the record is plain data.
+  return JSON.parse(JSON.stringify({id:s.id,name:s.name,startTime:s.startTime,endTime:end.toISOString(),
+    durationSec:Math.round((end-start)/1000),program:s.program,notes:s.notes||'',exercises,currentExIdx:0}));
 }
 
 async function finishProgramSession(){
   const s=state.session;if(!s)return;
-  const workout=sessionToWorkout(s);
+  const workout=sessionToWorkout(s,state._finishMin);
+  // Replace rather than add, in case an earlier save attempt already stored it.
+  state.workouts=state.workouts.filter(w=>w.id!==workout.id);
   state.workouts.push(workout);
   await dbPut('workouts',workout);
   backupToFirebase();
@@ -369,10 +384,14 @@ function renderRunDock(){
 
 function renderFinishSheet(){
   const s=state.session,sets=s.steps.reduce((n,st)=>n+st.exs.reduce((m,e)=>m+e.sets.filter(x=>x.done).length,0),0);
-  const left=s.steps.filter(x=>x.status==='todo').length;
+  const left=s.steps.filter(x=>x.status==='todo').length,len=state._finishMin||0;
   return `<div class="modal-overlay" onclick="if(event.target===this)closeSheet()"><div class="modal" role="dialog" aria-label="Finish session">
     <div class="modal-title">Finish ${esc(s.name)}?</div>
     <p class="muted mb-12">${sets} sets logged${left?` · ${left} step${left>1?'s':''} not done (they'll be saved as not done)`:''}.</p>
+    <label class="field mb-12"><span>Session length${len>=240?'<br><small class="muted">Left it running? Fix it here.</small>':''}</span><span class="field-in">
+      <input type="number" inputmode="numeric" min="0" data-sid="fin-h" value="${Math.floor(len/60)}" style="width:56px" aria-label="Hours" onchange="setFinishLen(this.value,null)"><span class="unit">h</span>
+      <input type="number" inputmode="numeric" min="0" max="59" data-sid="fin-m" value="${len%60}" style="width:56px" aria-label="Minutes" onchange="setFinishLen(null,this.value)"><span class="unit">m</span>
+    </span></label>
     <button class="btn btn-big mb-8" onclick="finishProgramSession()">Save session</button>
     <button class="btn btn-outline mb-8" onclick="closeSheet()">Keep going</button>
     <button class="btn btn-danger-ghost" onclick="state._sheet='discard';render()">Discard session</button>

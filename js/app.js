@@ -976,6 +976,7 @@ function editPastWorkout(wid){
   const w=state.workouts.find(w=>w.id===wid);
   if(!w)return;
   state._editWorkout=JSON.parse(JSON.stringify(w));
+  state._editDurMin=Math.round(workoutDurationSec(w)/60)||'';
   state.subPage='edit-past-workout';
   render();
 }
@@ -985,7 +986,7 @@ function renderEditPastWorkout(){
   if(!w)return '';
   return `
     <div class="mb-12"><label class="text-sm" style="color:var(--text2);display:block;margin-bottom:4px">Workout Name</label><input type="text" data-sid="epw-name" value="${w.name}" onchange="state._editWorkout.name=this.value"></div>
-    <div class="mb-16"><label class="text-sm" style="color:var(--text2);display:block;margin-bottom:4px">Total Duration (minutes)</label><input type="number" data-sid="epw-dur" value="${w.totalDuration||''}" placeholder="e.g. 60" inputmode="numeric" onchange="state._editWorkout.totalDuration=parseInt(this.value)||0"></div>
+    <div class="mb-16"><label class="text-sm" style="color:var(--text2);display:block;margin-bottom:4px">Session length (minutes)</label><input type="number" data-sid="epw-dur" value="${state._editDurMin}" placeholder="e.g. 60" inputmode="numeric" onchange="state._editDurMin=parseInt(this.value)||0"></div>
     ${w.exercises.map((ex,i)=>`
       <div class="card">
         <div class="flex-between mb-8"><span class="fw-700">${ex.name}</span><button style="color:var(--red);padding:4px" onclick="state._editWorkout.exercises.splice(${i},1);render()">×</button></div>
@@ -1014,6 +1015,11 @@ function renderEditPastWorkout(){
 
 async function savePastWorkout(){
   const w=state._editWorkout;
+  // Length is stored three ways across app versions; keep them in step.
+  if(state._editDurMin>0){
+    w.durationSec=state._editDurMin*60;w.totalDuration=state._editDurMin;
+    w.endTime=new Date(new Date(w.startTime).getTime()+w.durationSec*1000).toISOString();
+  }
   const idx=state.workouts.findIndex(wk=>wk.id===w.id);
   if(idx>=0)state.workouts[idx]=w;
   await dbPut('workouts',w);
@@ -1829,7 +1835,12 @@ function backupToFirebase(){
   for(const t of state.templatesArchive)data.templatesArchive[t.id]=t;
   for(const b of state.bodyweights)data.bodyweights[b.date]=b;
   for(const g of state.goals)data.goals[g.id]=g;
-  ref.set(data).then(()=>console.log('[Backup] Synced to Firebase')).catch(e=>console.warn('[Backup] Failed:',e));
+  // Firebase refuses any `undefined` value and throws straight away, which used
+  // to stop whatever called this (e.g. Save session). The JSON round trip drops
+  // undefined fields, and a failed backup is only ever logged.
+  try{
+    ref.set(JSON.parse(JSON.stringify(data))).then(()=>console.log('[Backup] Synced to Firebase')).catch(e=>console.warn('[Backup] Failed:',e));
+  }catch(e){console.warn('[Backup] Failed:',e)}
 }
 
 async function restoreFromFirebase(){
