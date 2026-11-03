@@ -71,7 +71,7 @@ function renderHomeBanners(plan){
 function chip(id,w,dow){
   if(!id)return '<span class="chip none">—</span>';
   if(id==='rest')return '<span class="chip" style="--c:var(--walk)"><b>Rest</b></span>';
-  const m=SESSION_META[id],sess=buildSession(id,w,state.program);
+  const m=SESSION_META[id],sess=buildSessionFor(id,w);
   const sub=w.kind==='deload'&&m.gym?m.sub+' · 2 sets':id==='fullSS'&&sess.steps[1]?sess.steps[1].every+' s swings':m.sub;
   return `<button class="chip" style="--c:${CAT_COLOR[m.cat]}" onclick="openPreview('${id}',${w.idx})"><b>${m.name}</b><i>${esc(sub)}</i></button>`;
 }
@@ -79,7 +79,7 @@ function chip(id,w,dow){
 function renderTodayCard(slot,id,w){
   if(!id)return '';
   if(id==='rest')return `<article class="card today-card muted-card" style="--c:var(--walk)"><div class="card-h"><span class="tag">${slot}</span></div><h3>Rest</h3><p class="muted">Nothing planned. Recover.</p></article>`;
-  const sess=buildSession(id,w,state.program),done=todaysLogged(id);
+  const sess=buildSessionFor(id,w),done=todaysLogged(id);
   if(sess.taper)return '';
   const lines=sess.steps.filter(s=>s.kind!=='block'||!sess.gym).slice(0,sess.gym?5:4).map(s=>`<li><span>${esc(s.title)}</span><span class="num">${esc(s.rx)}</span></li>`).join('');
   const strip=sess.gym?renderStrip(sess):'';
@@ -107,7 +107,7 @@ function resumeSession(){state.subPage=state.session.kind==='program'?'run':'act
 // ---- session preview ----
 function openPreview(id,weekIdx){state._preview={id,weekIdx};state.subPage='preview';render()}
 function renderPreview(){
-  const {id,weekIdx}=state._preview,w=weekAt(weekIdx,state.program),sess=buildSession(id,w,state.program);
+  const {id,weekIdx}=state._preview,w=weekAt(weekIdx,state.program),sess=buildSessionFor(id,w);
   if(sess.taper)return `<div class="card" style="--c:${CAT_COLOR[sess.cat]}"><h3>${sess.name}</h3><p class="taper">Taper week. No lifting: 20 min of mobility and an easy walk, then go ride.</p></div>`;
   const rows=sess.steps.map(s=>`<tr><td><span class="ex">${esc(s.title)}</span>${s.exs[0].cue?`<span class="note">${esc(s.exs.map(e=>e.cue).join(' '))}</span>`:''}</td><td class="rx">${esc(s.rx)}</td></tr>`).join('');
   return `<article class="card" style="--c:${CAT_COLOR[sess.cat]}">

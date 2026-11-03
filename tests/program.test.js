@@ -80,14 +80,25 @@ const iv=d=>{const s=P.buildSession('fullSS',W(d),cfg);return s.steps.filter(x=>
 assert.deepEqual(['2026-10-26','2026-11-02','2026-11-09','2026-11-16'].map(iv),['45/75','40/70','35/65','30/60']);
 assert.deepEqual(['2026-11-30','2026-12-07','2026-12-14'].map(iv),['45/75','40/70','35/65']);
 const ss=P.buildSession('fullSS',W('2026-10-26'),cfg);
-assert.deepEqual(ss.steps.map(s=>s.kind+':'+(s.targetMin||s.rounds)),['block:5','interval:10','interval:10','block:30']);
+assert.deepEqual(ss.steps.map(s=>s.kind+':'+(s.targetMin||s.rounds)),['block:3','interval:10','interval:10','block:4']);
+assert.ok(ss.estMin.total<=30,'S&S morning under 30 min: '+ss.estMin.total);
 assert.equal(ss.steps[1].restAfter,60);
 const light=P.buildSession('lightKB',W('2026-10-26'),cfg);
-assert.equal(setsReps(light.steps[0]),'1×10');assert.equal(setsReps(light.steps[1]),'5×10');
+assert.equal(setsReps(light.steps[1]),'1×10');assert.equal(setsReps(light.steps[2]),'5×10');
+assert.deepEqual(light.steps.map(s=>s.exs[0].key),['kbwarm','tgu','swing2','deadbug','sideplank','hollow','stretch']);
+assert.ok(light.estMin.total<=30,'light KB morning under 30 min: '+light.estMin.total);
+assert.ok(!light.steps.some(s=>s.exs[0].key==='walk'),'no walk on KB mornings');
+// Abs: holds +5 s per build week; Sunday has 3 rounds.
+const sideHold=d=>P.buildSession('lightKB',W(d),cfg).steps.find(s=>s.exs[0].key==='sideplank').exs[0].sets[0].secs;
+assert.deepEqual(['2026-10-26','2026-11-02','2026-11-16','2026-11-23'].map(sideHold),[30,35,45,30]);
+const sun=P.buildSession('absStretch',W('2026-10-26'),cfg);
+assert.equal(sun.steps.find(s=>s.exs[0].key==='deadbug').exs[0].sets.length,3);
+assert.ok(sun.estMin.total<=25,'Sunday abs + stretch ~20 min: '+sun.estMin.total);
 
 // Weekly layout.
 const L=P.weekLayout(W('2026-10-26')).map(d=>d.am+'/'+d.pm);
-assert.deepEqual(L,['lightKB/lowerA','fullSS/upperA','fullSS/null','lightKB/lowerB','fullSS/upperB','hike/null','walk/rest']);
+assert.deepEqual(L,['lightKB/lowerA','fullSS/upperA','fullSS/null','lightKB/lowerB','fullSS/upperB','hike/null','absStretch/rest']);
+assert.equal(P.weekLayout(W('2026-11-23'))[6].am,'absStretch');
 assert.ok(P.weekLayout(W('2026-11-23')).slice(0,5).every(d=>d.am==='lightKB'));  // deload: light KB every weekday morning
 
 // Today lookup, before the start date, and "repeat this week".
@@ -112,3 +123,28 @@ assert.equal(P.hitTopOfRange(incl,[{done:true,reps:12},{done:true,reps:11},{done
 assert.ok(P.warmupRamp(200).every(r=>r.weight<200));assert.equal(P.warmupRamp(0).length,0);
 
 console.log('program engine: '+n+' calendar weeks + trip/loop/session checks passed');
+
+// Incline walk vest: off by default, adjustable, never in a deload.
+assert.equal(P.DEFAULT_PROGRAM.vestLb,0);
+const walkOf=(c,d)=>{const st=P.buildSession('lowerA',W(d),c).steps;return st[st.length-1]};
+assert.equal(walkOf({...cfg,vestLb:0},'2026-10-26').rx,'25 min');
+assert.equal(walkOf({...cfg,vestLb:0},'2026-10-26').vest,true);
+assert.equal(walkOf({...cfg,vestLb:15},'2026-10-26').exs[0].sets[0].weight,15);
+assert.equal(walkOf({...cfg,vestLb:15},'2026-11-23').exs[0].sets[0].weight,0);
+assert.equal(P.nextCycleProposal({...cfg,vestLb:0}).vestLb,0);
+
+// Equipment swaps: own exercise id, last-used weight, else a flagged estimate.
+const w0=W('2026-10-26');
+const benchStep=(eq,last)=>P.buildSession('upperA',w0,{...cfg,equip:{bench:eq}},{lastWeight:()=>last}).steps[1];
+let bs=benchStep('bb',null);assert.equal(bs.equipCur,'bb');assert.deepEqual(bs.equipOpts,['bb','db','kb']);assert.equal(bs.exs[0].exerciseId,'c1');
+bs=benchStep('db',55);assert.equal(bs.exs[0].exerciseId,'c5');assert.equal(bs.exs[0].sets[0].weight,55);assert.equal(bs.estimate,false);
+assert.equal(bs.rx,'3×5 @ 55 lb each');assert.equal(bs.warmup.length,0);assert.equal(bs.exs[0].perHand,true);
+bs=benchStep('db',null);assert.equal(bs.exs[0].sets[0].weight,60);assert.equal(bs.estimate,true);      // 150 × .4
+bs=benchStep('kb',null);assert.equal(bs.exs[0].unit,'kg');assert.equal(bs.exs[0].sets[0].weight,24);   // 52.5 lb ≈ 23.8 kg → 24
+const rowStep=P.buildSession('upperB',w0,{...cfg,equip:{row:'db'}},{}).steps[3];
+assert.equal(rowStep.rx,'3×8/side @ 50 lb');assert.equal(rowStep.acc,null);
+const carryKB=P.buildSession('upperA',w0,{...cfg,equip:{carry:'kb'}},{}).steps[3];
+assert.equal(carryKB.exs[0].unit,'s');assert.equal(carryKB.exs[0].wUnit,'kg');assert.equal(carryKB.exs[0].sets[0].weight,22);
+assert.equal(P.buildSession('upperA',w0,{...cfg,equip:{bench:'bogus'}},{}).steps[1].equipCur,'bb');
+
+console.log('program engine: swaps, vest, abs mornings passed');

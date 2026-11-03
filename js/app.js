@@ -364,14 +364,9 @@ function getExercisePR(exerciseId){
   return maxWeight;
 }
 
+// Same rules as the session screen (exVolumeLb in runner.js).
 function calcVolume(workout){
-  let total=0;
-  for(const ex of workout.exercises){
-    if(ex.isCardio||ex.unit==='s'||ex.unit==='min')continue;
-    const k=ex.unit==='kg'?KG_TO_LB:1;
-    for(const s of ex.sets)if(s.done)total+=(s.weight||0)*k*(s.reps||0);
-  }
-  return Math.round(total);
+  return Math.round(workout.exercises.reduce((n,ex)=>n+exVolumeLb(ex,ex.sets||[]),0));
 }
 
 function getTimerRemaining(){
@@ -940,8 +935,8 @@ function renderWorkoutDetail(){
   const fmtSet=(ex,s)=>{
     if(!s.done)return '<span class="muted">not done</span>';
     if(ex.unit==='min'||ex.isCardio)return (s.reps||ex.durationMin||0)+' min';
-    if(ex.unit==='s')return (s.weight?s.weight+' lb · ':'')+(s.secs||0)+' s'+(ex.perSide?'/side':'');
-    return s.weight+' '+(ex.unit==='kg'?'kg':'lb')+' × '+s.reps+(ex.perSide?'/side':'');
+    if(ex.unit==='s')return (s.weight?s.weight+' '+(ex.wUnit||'lb')+' · ':'')+(s.secs||0)+' s'+(ex.perSide?'/side':'');
+    return s.weight+' '+(ex.unit==='kg'?'kg':'lb')+(ex.perHand?' each':'')+' × '+s.reps+(ex.perSide?'/side':'');
   };
   return `
     <div class="sel-banner" style="border-top:4px solid ${workoutColor(w)}"><strong>${esc(w.name)}</strong><span class="num">${fmtDate(w.startTime)}</span>${w.program?`<span class="focus">${esc(w.program.weekLabel)}</span>`:''}</div>
@@ -956,6 +951,7 @@ function renderWorkoutDetail(){
       const sets=ex.isCardio&&(!ex.sets||!ex.sets.length)?[{done:true,reps:ex.durationMin||0}]:ex.sets;
       return `<div class="card ex-card">
         <div class="card-h"><h3>${esc(ex.name)}</h3>${ex.skipped?'<span class="tag muted">skipped</span>':''}</div>
+        ${ex.note?`<p class="ex-note">${esc(ex.note)}</p>`:''}
         <table class="sets"><tbody>${sets.map((s,i)=>{
           const pr=s.pr||(oldPR!=null&&s.done&&s.weight>0&&s.weight>=oldPR);
           return `<tr class="${s.done?'':'muted'}"><td class="sn num">${i+1}</td><td class="rx">${fmtSet(ex,s)}${pr?'<span class="badge">best</span>':''}</td></tr>`;
@@ -1926,7 +1922,9 @@ async function initApp(){
   // Program settings (weights, calendar), alert toggles, backup reminders
   const prog=await dbGet('settings','program');
   const base=JSON.parse(JSON.stringify(DEFAULT_PROGRAM));
-  state.program=prog?{...base,...prog,W:{...base.W,...prog.W},acc:{...base.acc,...prog.acc},accReady:{...(prog.accReady||{})}}:base;
+  state.program=prog?{...base,...prog,W:{...base.W,...prog.W},acc:{...base.acc,...prog.acc},accReady:{...(prog.accReady||{})},equip:{...(prog.equip||{})}}:base;
+  // Nov 2026: the incline-walk vest became optional (off unless you set it on the walk).
+  if(!state.program.vestOptional){state.program.vestLb=0;state.program.vestOptional=true;await dbPut('settings',JSON.parse(JSON.stringify(state.program)))}
   const alerts=await dbGet('settings','alerts');
   if(alerts)Object.assign(alertPrefs,alerts.value);
   const lastExport=await dbGet('settings','lastExport');

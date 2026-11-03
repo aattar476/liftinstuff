@@ -9,10 +9,26 @@
 const CAT_COLOR={lower:'var(--lower)',upper:'var(--upper)',kb:'var(--kb)',walk:'var(--walk)',hike:'var(--hike)'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// Last weight logged for an exercise, converted to `unit` if it was logged in
+// the other one (old quick workouts are always lb). Used for equipment swaps.
+function lastWeightFor(libId,unit){
+  let best=null,bestT='';
+  for(const w of state.workouts){
+    if(!(w.startTime>bestT))continue;
+    const e=(w.exercises||[]).find(e=>e.exerciseId===libId);if(!e)continue;
+    const ws=(e.sets||[]).filter(x=>x.done&&x.weight>0).map(x=>x.weight);if(!ws.length)continue;
+    const from=(e.wUnit||e.unit)==='kg'?'kg':'lb';let wt=Math.max(...ws);
+    if(from!==unit)wt=unit==='kg'?nearestBell(wt/KG_TO_LB):Math.round(wt*KG_TO_LB/5)*5;
+    best=wt;bestT=w.startTime;
+  }
+  return best;
+}
+function buildSessionFor(id,w){return buildSession(id,w,state.program,{lastWeight:lastWeightFor})}
+
 function startProgramSession(id,weekIdx){
   if(state.session){state.subPage=state.session.kind==='program'?'run':'active-workout';render();return}
   const w=weekIdx!=null?weekAt(weekIdx,state.program):weekForDate(new Date(),state.program);
-  const sess=buildSession(id,w,state.program);
+  const sess=buildSessionFor(id,w);
   if(!sess||!sess.steps.length)return;
   unlockAudio();
   state.session={
@@ -31,11 +47,14 @@ const curStep=()=>state.session.steps[state.session.stepIdx];
 let runTick=null;
 function ensureRunTicker(){
   clearInterval(runTick);runTick=null;
-  if(state.session&&state.session.kind==='program'&&state.session.timer)runTick=setInterval(runnerTick,200);
+  if(state.session&&state.session.kind==='program')runTick=setInterval(runnerTick,200);
 }
 function runnerTick(){
   const s=state.session,t=s&&s.timer;
-  if(!t||s.kind!=='program'){clearInterval(runTick);runTick=null;return}
+  if(!s||s.kind!=='program'){clearInterval(runTick);runTick=null;return}
+  const el=document.getElementById('run-elapsed');
+  if(el)el.textContent=fmtUp(Date.now()-new Date(s.startTime));
+  if(!t)return;
   const ev=timerEvents(t);
   if(ev.length){playEvents(ev);saveSession()}
   if(ev.includes('end')){onTimerEnd(t);return}
@@ -44,7 +63,7 @@ function runnerTick(){
   else updateRunTimerDom(t);
 }
 // Recompute immediately when the screen comes back (setInterval is frozen while hidden).
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.session&&state.session.timer)runnerTick()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.session&&state.session.kind==='program')runnerTick()});
 
 function setTimer(t){state.session.timer=t;saveSession();ensureRunTicker()}
 function clearTimer(){state.session.timer=null;saveSession();ensureRunTicker()}
@@ -84,6 +103,9 @@ function updateRunTimerDom(t){
   if(bar&&t.type==='block'&&t.targetSec)bar.style.width=Math.min(100,timerElapsedMs(t)/10/t.targetSec)+'%';
 }
 
+// Doing anything on a skipped step means you're doing it after all.
+function unskip(si){const st=state.session.steps[si];if(st&&st.status==='skipped')st.status='todo'}
+
 // ---- logging sets ----
 function setLb(ex,set){return (set.weight||0)*(ex.unit==='kg'?KG_TO_LB:1)}
 
@@ -106,6 +128,7 @@ function editSet(si,ei,i,field,val){
 
 function toggleSetDone(si,ei,i){
   unlockAudio();
+  unskip(si);
   const step=state.session.steps[si],ex=step.exs[ei],set=ex.sets[i];
   if(set.done){set.done=false;set.pr=false;step.status='todo';saveSession();render();return}
   set.done=true;set.pr=isNewBest(ex.exerciseId,ex,set);
@@ -144,7 +167,7 @@ function dismissSuggestion(i){state.session.suggest.splice(i,1);saveSession();re
 
 // ---- holds, intervals, blocks ----
 function startHold(si,i){
-  unlockAudio();
+  unlockAudio();unskip(si);
   const step=state.session.steps[si],set=step.exs[0].sets[i];
   if(step.mode==='stopwatch')setTimer(makeTimer('stopwatch',{ctx:{step:si,set:i}}));
   else setTimer(makeTimer('hold',{seconds:set.secs||60,ctx:{step:si,set:i}}));
@@ -157,7 +180,7 @@ function stopHold(){
   state.session.timer=null;afterSetLogged(t.ctx.step);ensureRunTicker();
 }
 function startInterval(si){
-  unlockAudio();
+  unlockAudio();unskip(si);
   const step=state.session.steps[si];
   setTimer(makeTimer('interval',{every:step.every,rounds:step.rounds,ctx:{step:si}}));
   playEvents(timerEvents(state.session.timer));   // round 1 beep now
@@ -170,14 +193,14 @@ function stopIntervalEarly(){
   state.session.timer=null;completeStep(t.ctx.step);ensureRunTicker();saveSession();render();
 }
 function startBlock(si){
-  unlockAudio();
+  unlockAudio();unskip(si);
   const step=state.session.steps[si];
   setTimer(makeTimer('block',{targetSec:step.targetMin*60,ctx:{step:si}}));render();
 }
 function finishBlock(si){
   const s=state.session,step=s.steps[si],t=s.timer;
   const ms=t&&t.type==='block'&&t.ctx.step===si?timerElapsedMs(t):0;
-  const set=step.exs[0].sets[0];
+  const set=step.exs[0].sets[0];unskip(si);
   set.reps=ms?Math.max(1,Math.round(ms/60000)):(set.reps||step.targetMin);set.done=true;
   if(t&&t.type==='block')s.timer=null;
   completeStep(si);ensureRunTicker();saveSession();render();
@@ -205,6 +228,39 @@ function toggleCue(){state._showCue=!state._showCue;render()}
 function toggleRamp(){state._showRamp=!state._showRamp;render()}
 let _noteSave;
 function editNote(v){state.session.notes=v;clearTimeout(_noteSave);_noteSave=setTimeout(saveSession,400)}
+function editStepNote(si,v){state.session.steps[si].userNote=v;clearTimeout(_noteSave);_noteSave=setTimeout(saveSession,400)}
+
+// ---- equipment swap ----
+// Rebuilds this step for the chosen kit and remembers the choice for next time.
+function swapEquip(si,choice){
+  const s=state.session,old=s.steps[si];
+  if(!old.swap||old.equipCur===choice||old.exs.some(e=>e.sets.some(x=>x.done)))return;
+  state.program.equip={...(state.program.equip||{}),[old.swap]:choice};
+  saveProgram();
+  const fresh=buildSessionFor(s.program.sessionId,weekAt(s.program.weekIdx,state.program));
+  const next=fresh&&fresh.steps.find(x=>x.swap===old.swap);
+  if(!next)return;
+  s.steps[si]={...JSON.parse(JSON.stringify(next)),status:'todo',userNote:old.userNote};
+  saveSession();render();
+}
+
+// ---- incline-walk vest ----
+function setVest(si,val){
+  const step=state.session.steps[si],v=Math.max(0,parseFloat(val)||0);
+  step.exs[0].sets[0].weight=v;
+  step.rx=step.targetMin+' min'+(v?' · vest '+v+' lb':'');
+  state.program.vestLb=v;saveProgram();
+  saveSession();render();
+}
+
+// Weight moved so far (lb): kg converted, both hands counted for pairs of
+// dumbbells/bells, both sides for per-side reps. Holds and timed blocks don't count.
+function exVolumeLb(e,sets){
+  if(e.isCardio||e.unit==='s'||e.unit==='min')return 0;
+  const k=(e.unit==='kg'?KG_TO_LB:1)*(e.perHand?2:1)*(e.perSide?2:1);
+  return (sets||e.sets||[]).reduce((n,x)=>n+(x.done?(x.weight||0)*(x.reps||0)*k:0),0);
+}
+function sessionVolumeLb(s){return Math.round(s.steps.reduce((n,st)=>n+st.exs.reduce((m,e)=>m+exVolumeLb(e),0),0))}
 
 // ---- finish / discard ----
 function askFinish(){
@@ -226,12 +282,13 @@ function sessionToWorkout(s,lenMin){
   const start=new Date(s.startTime);
   const end=lenMin?new Date(start.getTime()+lenMin*60000):new Date();
   const exercises=[];
-  for(const step of s.steps)for(const e of step.exs){
+  for(const step of s.steps)step.exs.forEach((e,ei)=>{
     exercises.push({exerciseId:e.exerciseId,name:e.name,body:e.body,equip:e.equip,isCardio:!!e.isCardio,
-      unit:e.unit,perSide:!!e.perSide,key:e.key,kind:step.kind,skipped:step.status==='skipped',
+      unit:e.unit,wUnit:e.wUnit,perSide:!!e.perSide,perHand:!!e.perHand,key:e.key,kind:step.kind,skipped:step.status==='skipped',
+      note:ei===0&&step.userNote?step.userNote:undefined,
       durationMin:e.unit==='min'?(e.sets[0].done?e.sets[0].reps:0):undefined,
       sets:e.sets.map(x=>({weight:x.weight||0,reps:x.reps||0,secs:x.secs,done:!!x.done,pr:!!x.pr}))});
-  }
+  });
   // JSON round trip drops undefined fields so the record is plain data.
   return JSON.parse(JSON.stringify({id:s.id,name:s.name,startTime:s.startTime,endTime:end.toISOString(),
     durationSec:Math.round((end-start)/1000),program:s.program,notes:s.notes||'',exercises,currentExIdx:0}));
@@ -281,20 +338,28 @@ function renderRunner(){
       <button class="ramp-h" onclick="toggleRamp()" aria-expanded="${!!state._showRamp}">Warm-up ramp <span class="muted">(optional)</span><span class="num">${state._showRamp?'−':'+'}</span></button>
       ${state._showRamp?`<table class="sets"><tbody>${step.warmup.map(r=>`<tr><td class="muted">${r.label}</td><td class="num">${r.weight} lb × ${r.reps}</td></tr>`).join('')}</tbody></table>`:''}
     </div>`:'';
+  const eq=step.equipOpts&&step.equipOpts.length>1?(()=>{
+    const locked=step.exs.some(e=>e.sets.some(x=>x.done));
+    return `<div class="equip-row" role="group" aria-label="Equipment">${step.equipOpts.map(o=>`<button class="${o===step.equipCur?'on':''}" ${locked&&o!==step.equipCur?'disabled':''} aria-pressed="${o===step.equipCur}" onclick="swapEquip(${si},'${o}')">${EQUIP_LABEL[o]}</button>`).join('')}</div>
+      ${step.estimate?`<p class="est-note">Weight is an estimate from your ${EQUIP_LABEL[step.equipBase].toLowerCase()} weight. Change it if it's off; next time it uses what you log.</p>`:''}`;
+  })():'';
   return `<div class="run">
     <div class="dots" role="list">${dots}</div>
+    <div class="run-stats"><span><b class="num" id="run-elapsed">${fmtUp(Date.now()-new Date(s.startTime))}</b><small>time</small></span><span><b class="num">${sessionVolumeLb(s).toLocaleString()}</b><small>lb moved</small></span></div>
     ${sug}
     <section class="run-step" style="--c:${c}">
       <div class="eyebrow">Step ${si+1} of ${s.steps.length}${step.main?' · main lift':step.status==='skipped'?' · skipped':''}</div>
       <h2 class="run-title">${esc(step.title)}</h2>
       <div class="run-rx num">${esc(step.rx)}${step.rest?` · rest ${step.rest} s`:''}</div>
       ${cue?`<button class="cue-btn" onclick="toggleCue()" aria-expanded="${!!state._showCue}">${state._showCue?'Hide cue':'Cue'}</button>${state._showCue?`<p class="cue">${esc(cue)}</p>`:''}`:''}
+      ${eq}
       ${ramp}
       ${body}
+      ${step.status==='todo'&&!(t&&t.ctx&&t.ctx.step===si)?`<button class="skip-link" onclick="skipStep()">Skip this exercise</button>`:''}
     </section>
     <section class="run-notes">
-      <label class="eyebrow" for="run-note">Session note</label>
-      <textarea id="run-note" data-sid="run-note" rows="2" placeholder="How did it feel?" oninput="editNote(this.value)">${esc(s.notes)}</textarea>
+      <label class="eyebrow" for="run-note-${si}">Note · ${esc(step.title)}</label>
+      <textarea id="run-note-${si}" data-sid="run-note-${si}" rows="2" placeholder="e.g. box height, how it felt" oninput="editStepNote(${si},this.value)">${esc(step.userNote)}</textarea>
     </section>
     ${state._sheet==='finish'?renderFinishSheet():state._sheet==='discard'?renderDiscardSheet():''}
   </div>`;
@@ -303,7 +368,7 @@ function renderRunner(){
 function renderWeightRows(step,si){
   const n=step.exs[0].sets.length,rows=[];
   for(let i=0;i<n;i++)step.exs.forEach((e,ei)=>{
-    const x=e.sets[i],unit=e.unit==='kg'?'kg':'lb';
+    const x=e.sets[i],unit=(e.unit==='kg'?'kg':'lb')+(e.perHand?' ea':'');
     rows.push(`<tr class="${x.done?'done':''}">
       <td class="sn num">${i+1}${step.exs.length>1?`<small>${esc(e.name.split(' ')[0])}</small>`:''}</td>
       <td>${e.equip==='Bodyweight'&&!step.acc?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="${esc(e.name)} set ${i+1} ${unit}" data-sid="rw-${si}-${ei}-${i}" value="${x.weight||0}" onchange="editSet(${si},${ei},${i},'weight',this.value)"><span class="unit">${unit}</span>`}</td>
@@ -323,7 +388,7 @@ function renderHold(step,si,t){
       ${t.type==='stopwatch'?`<button class="btn" onclick="stopHold()">Stop + log</button>`:`<button class="btn" onclick="stopHold()">Done early</button>`}</div></div>`:'';
   const rows=e.sets.map((x,i)=>`<tr class="${x.done?'done':''}">
       <td class="sn num">${i+1}</td>
-      <td>${e.equip==='Bodyweight'?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="Set ${i+1} lb" data-sid="hw-${si}-${i}" value="${x.weight||0}" onchange="editSet(${si},0,${i},'weight',this.value)"><span class="unit">lb</span>`}</td>
+      <td>${e.equip==='Bodyweight'?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="Set ${i+1} lb" data-sid="hw-${si}-${i}" value="${x.weight||0}" onchange="editSet(${si},0,${i},'weight',this.value)"><span class="unit">${e.wUnit||'lb'}</span>`}</td>
       <td class="num">${x.done?x.secs+' s':step.mode==='stopwatch'?(e.distanceM||40)+' m/side':x.secs+' s'}</td>
       <td class="ck">${x.done?`<button class="set-check done" aria-label="Undo set ${i+1}" onclick="toggleSetDone(${si},0,${i})">${icons.check}</button>`:`<button class="set-check go" aria-label="Start set ${i+1}" ${running?'disabled':''} onclick="startHold(${si},${i})">${icons.play}</button>`}</td>
     </tr>`).join('');
@@ -355,15 +420,16 @@ function renderBlock(step,si,t){
   const running=t&&t.type==='block'&&t.ctx.step===si,set=step.exs[0].sets[0];
   if(running){
     const reached=timerElapsedMs(t)>=step.targetMin*60000;
-    return `<div class="big-wrap">
+    return `${step.vest&&set.weight?`<p class="muted">Vest ${set.weight} lb</p>`:''}<div class="big-wrap">
       <div class="big-time num ${reached?'reached':''}" id="big-time">${fmtUp(timerElapsedMs(t))}</div>
       <div class="muted center">target ${step.targetMin}:00${reached?' · reached':''}${t.pausedAt?' · paused':''}</div>
       <div class="bar"><i id="block-bar" style="width:${Math.min(100,timerElapsedMs(t)/10/(step.targetMin*60))}%"></i></div>
       <div class="row2"><button class="btn btn-outline" onclick="toggleTimerPause()">${t.pausedAt?'Resume':'Pause'}</button><button class="btn" onclick="finishBlock(${si})">Done</button></div>
     </div>`;
   }
-  if(set.done)return `<div class="done-note">Logged ${set.reps} min.</div>`;
-  return `${step.note?`<p class="muted">${esc(step.note)}</p>`:''}
+  const vest=step.vest?`<label class="field vest-field"><span>Weighted vest <small class="muted">0 = none</small></span><span class="field-in"><input type="number" inputmode="decimal" min="0" data-sid="vest-${si}" value="${set.weight||0}" onchange="setVest(${si},this.value)"><span class="unit">lb</span></span></label>`:'';
+  if(set.done)return `<div class="done-note">Logged ${set.reps} min${set.weight?' with a '+set.weight+' lb vest':''}.</div>`;
+  return `${vest}${step.note&&!step.vest?`<p class="muted">${esc(step.note)}</p>`:''}
     <button class="btn btn-big" onclick="startBlock(${si})">Start ${step.targetMin} min</button>
     <button class="btn btn-ghost" onclick="finishBlock(${si})">Already done: log ${step.targetMin} min</button>`;
 }
@@ -377,7 +443,6 @@ function renderRunDock(){
     </div>`:'';
   return `<div class="dock">${rest}<div class="dock-nav">
       <button class="btn btn-outline" ${si===0?'disabled':''} onclick="goStep(${si-1})" aria-label="Previous exercise">${icons.back}</button>
-      ${step.status==='done'||step.status==='skipped'?'':`<button class="btn btn-ghost" onclick="skipStep()">Skip</button>`}
       ${last?`<button class="btn" onclick="askFinish()">Finish</button>`:`<button class="btn" onclick="goStep(${si+1})">Next</button>`}
     </div></div>`;
 }
@@ -392,6 +457,8 @@ function renderFinishSheet(){
       <input type="number" inputmode="numeric" min="0" data-sid="fin-h" value="${Math.floor(len/60)}" style="width:56px" aria-label="Hours" onchange="setFinishLen(this.value,null)"><span class="unit">h</span>
       <input type="number" inputmode="numeric" min="0" max="59" data-sid="fin-m" value="${len%60}" style="width:56px" aria-label="Minutes" onchange="setFinishLen(null,this.value)"><span class="unit">m</span>
     </span></label>
+    <label class="eyebrow" for="fin-note">Session note</label>
+    <textarea id="fin-note" data-sid="fin-note" rows="2" class="mb-12" placeholder="How did the whole session feel?" oninput="editNote(this.value)">${esc(s.notes)}</textarea>
     <button class="btn btn-big mb-8" onclick="finishProgramSession()">Save session</button>
     <button class="btn btn-outline mb-8" onclick="closeSheet()">Keep going</button>
     <button class="btn btn-danger-ghost" onclick="state._sheet='discard';render()">Discard session</button>

@@ -22,7 +22,8 @@ const DEFAULT_PROGRAM={
   acc:{latl:0,pud:0,carry:0,stepd:0,incl:0,row:0,pallof:0},
   accReady:{},            // accessories that hit the top of their rep range: suggest +weight
   kbKg:16,
-  vestLb:10,
+  vestLb:0,               // incline-walk vest; 0 = no vest (set on the walk screen)
+  equip:{},               // equipment swaps that stick, e.g. {bench:'db'} (see VARIANTS)
   cycleHistory:[],
 };
 
@@ -154,6 +155,10 @@ const PX={
   swing1:{name:'One-arm swing',libId:'h11',body:'Hamstrings',equip:'Kettlebell',cue:'Hike the bell back, snap the hips, float it to chest height.'},
   tgu:{name:'Turkish get-up',libId:'co20',body:'Core',equip:'Kettlebell',cue:'Eyes on the bell, arm locked, slow and deliberate both ways.'},
   swing2:{name:'Two-hand swing',libId:'h11',body:'Hamstrings',equip:'Kettlebell',cue:'Easy and crisp; hips do the work, arms are ropes.'},
+  deadbug:{name:'Dead bug',libId:'co18',body:'Core',equip:'Bodyweight',cue:'Low back pressed to the floor; reach opposite arm and leg slowly, exhale as you reach.'},
+  sideplank:{name:'Side plank',libId:'co10',body:'Core',equip:'Bodyweight',cue:'Straight line ankle to ear, hips high. Alternate sides each set.'},
+  hollow:{name:'Hollow hold',libId:'ssb_hollow',body:'Core',equip:'Bodyweight',cue:'Low back glued down, arms and legs long and just off the floor. Bend the knees to make it easier.'},
+  stretch:{name:'Stretch',libId:'ssb_stretch',body:'Core',equip:'Bodyweight',cue:'Hip flexors, hamstrings, calves, upper back: 30–45 s each, slow breathing.'},
   walk:{name:'Walk',libId:'ssb_walk',body:'Cardio',equip:'Bodyweight',isCardio:true,cue:'Easy pace, nose breathing.'},
   hike:{name:'Hike / ruck',libId:'ssb_hike',body:'Cardio',equip:'Bodyweight',isCardio:true,cue:'Pack on, hills if you can; slow on the downhills.'},
 };
@@ -168,7 +173,79 @@ const PROGRAM_EXERCISES=[
   {id:'ssb_mobility',name:'Mobility',body:'Core',equip:'Bodyweight'},
   {id:'ssb_walk',name:'Walk',body:'Cardio',equip:'Bodyweight',isCardio:true},
   {id:'ssb_hike',name:'Hike / Ruck',body:'Cardio',equip:'Bodyweight',isCardio:true},
+  {id:'ssb_hollow',name:'Hollow Hold',body:'Core',equip:'Bodyweight'},
+  {id:'ssb_stretch',name:'Stretch',body:'Core',equip:'Bodyweight'},
+  {id:'ssb_dbsquat',name:'Dumbbell Squat',body:'Quads',equip:'Dumbbell'},
+  {id:'ssb_dbdead',name:'Dumbbell Deadlift',body:'Back',equip:'Dumbbell'},
+  {id:'ssb_kbdead',name:'Kettlebell Deadlift',body:'Back',equip:'Kettlebell'},
+  {id:'ssb_kbfloor',name:'Kettlebell Floor Press',body:'Chest',equip:'Kettlebell'},
+  {id:'ssb_kbincl',name:'Kettlebell Incline Press',body:'Chest',equip:'Kettlebell'},
+  {id:'ssb_kblatl',name:'Kettlebell Lateral Lunge',body:'Quads',equip:'Kettlebell'},
+  {id:'ssb_kbstepd',name:'Kettlebell Step-Down',body:'Quads',equip:'Kettlebell'},
+  {id:'ssb_kbcarry',name:'Kettlebell Suitcase Carry',body:'Core',equip:'Kettlebell'},
 ];
+
+// ---- equipment swaps ----
+// Lifts that can be done with other kit. Each variant is logged under its own
+// exercise, so DB bench progress is tracked apart from barbell bench. `f` is
+// the rough fraction of the program weight (lb) used to estimate a first
+// weight when there's no history for that variant (per hand where perHand).
+const EQUIP_LABEL={bb:'Barbell',db:'Dumbbell',kb:'Kettlebell',cable:'Cable'};
+const VARIANTS={
+  squat:{base:'bb',opts:{bb:null,
+    db:{name:'Dumbbell squat',libId:'ssb_dbsquat',equip:'Dumbbell',perHand:true,f:.3,cue:'Dumbbells at the shoulders or hanging; sit between your heels.'},
+    kb:{name:'Kettlebell squat',libId:'q16',equip:'Kettlebell',kg:true,perHand:true,f:.3,cue:'Bells racked on the chest, elbows in; sit between your heels.'}}},
+  bench:{base:'bb',opts:{bb:null,
+    db:{name:'Dumbbell bench press',libId:'c5',equip:'Dumbbell',perHand:true,f:.4,cue:'Shoulder blades pinned; lower to the chest line, press up and slightly in.'},
+    kb:{name:'Kettlebell floor press',libId:'ssb_kbfloor',equip:'Kettlebell',kg:true,perHand:true,f:.35,cue:'Lying on the floor, upper arms touch down each rep; wrists straight.'}}},
+  deadlift:{base:'bb',opts:{bb:null,
+    db:{name:'Dumbbell deadlift',libId:'ssb_dbdead',equip:'Dumbbell',perHand:true,f:.3,cue:'Dumbbells at your sides, hips back, flat back, stand tall.'},
+    kb:{name:'Kettlebell deadlift',libId:'ssb_kbdead',equip:'Kettlebell',kg:true,perHand:true,f:.3,cue:'Bells between the feet, hips back, flat back, stand tall.'}}},
+  ohp:{base:'bb',opts:{bb:null,
+    db:{name:'Dumbbell shoulder press',libId:'s6',equip:'Dumbbell',perHand:true,f:.4,cue:'Glutes tight, press straight up, no leaning back.'},
+    kb:{name:'Kettlebell press',libId:'s21',equip:'Kettlebell',kg:true,perHand:true,f:.4,cue:'Bells in the rack, forearms vertical, press and lock out.'}}},
+  incl:{base:'bb',opts:{bb:null,
+    db:{name:'Incline dumbbell press',libId:'c6',equip:'Dumbbell',perHand:true,f:.4,cue:'Low incline, elbows slightly tucked, press up over the shoulders.'},
+    kb:{name:'Kettlebell incline press',libId:'ssb_kbincl',equip:'Kettlebell',kg:true,perHand:true,f:.35,cue:'Low incline, bells over the shoulders, wrists straight.'}}},
+  row:{base:'cable',opts:{cable:null,
+    db:{name:'Dumbbell row',libId:'b6',equip:'Dumbbell',perSide:true,f:.5,cue:'One hand on the bench, flat back, pull to the hip.'},
+    kb:{name:'Kettlebell row',libId:'b22',equip:'Kettlebell',kg:true,perSide:true,f:.5,cue:'One hand on the bench, flat back, pull the bell to the hip.'}}},
+  latl:{base:'db',opts:{db:null,
+    kb:{name:'Kettlebell lateral lunge',libId:'ssb_kblatl',equip:'Kettlebell',kg:true,perHand:true,f:1,cue:'Bells at your sides or one in goblet; sit back into the hip.'}}},
+  stepd:{base:'db',opts:{db:null,
+    kb:{name:'Kettlebell step-down',libId:'ssb_kbstepd',equip:'Kettlebell',kg:true,f:1,cue:'Lower the free heel slowly, knee over toes.'}}},
+  carry:{base:'db',opts:{db:null,
+    kb:{name:'Kettlebell suitcase carry',libId:'ssb_kbcarry',equip:'Kettlebell',kg:true,f:1,cue:'Heavy bell in one hand; walk tall without leaning.'}}},
+};
+const KB_SIZES=[4,6,8,10,12,14,16,18,20,22,24,26,28,32,36,40,44,48];
+function nearestBell(kg){return KB_SIZES.reduce((a,b)=>Math.abs(b-kg)<Math.abs(a-kg)?b:a)}
+function estimateVariantWeight(baseLb,v){
+  if(!baseLb)return 0;
+  const lb=baseLb*v.f;
+  return v.kg?nearestBell(lb/KG_TO_LB):Math.max(5,Math.round(lb/5)*5);
+}
+
+// Swaps a built step to the chosen equipment. opts.lastWeight(libId, unit)
+// returns the last weight logged for that exercise (in that unit) or null.
+function applyVariant(step,key,baseLb,cfg,opts){
+  const V=VARIANTS[key];if(!V)return step;
+  const cur=(cfg.equip&&cfg.equip[key]&&cfg.equip[key] in V.opts)?cfg.equip[key]:V.base;
+  step.swap=key;step.equipOpts=Object.keys(V.opts);step.equipCur=cur;step.equipBase=V.base;
+  if(cur===V.base)return step;
+  const v=V.opts[cur],e=step.exs[0],unit=v.kg?'kg':'lb';
+  const last=opts&&opts.lastWeight?opts.lastWeight(v.libId,unit):null;
+  const wt=last>0?last:estimateVariantWeight(baseLb,v);
+  step.estimate=!(last>0)&&wt>0;
+  Object.assign(e,{name:v.name,exerciseId:v.libId,equip:v.equip,cue:v.cue||e.cue,perHand:!!v.perHand,wUnit:unit});
+  if(v.perSide!=null)e.perSide=v.perSide;
+  if(step.kind==='weights')e.unit=unit;
+  for(const x of e.sets)x.weight=wt;
+  step.title=v.name;step.warmup=[];step.acc=null;step.topReps=null;
+  let rx=step.rx.replace(/ @ [^·]*$/,'');
+  if(e.perSide&&!/\/side/.test(rx))rx=rx.replace(/^(\d+×\d+)/,'$1/side');
+  step.rx=rx+(wt?' @ '+wt+' '+unit+(v.perHand?' each':''):'');
+  return step;
+}
 
 const MAIN_LIFTS=['squat','bench','deadlift','ohp'];
 const ACCESSORIES={latl:'Lateral lunge (DB each hand)',pud:'Pull-up / dip added weight',carry:'Suitcase carry DB',stepd:'Step-down DB',incl:'Incline bench',row:'Seated row',pallof:'Pallof press'};
@@ -185,22 +262,44 @@ function weightSets(n,weight,reps,extra){return Array.from({length:n},()=>({weig
 //   hold     - countdown (wall sit) or stopwatch (carry) per set, then rest
 //   interval - fires every N s for 10 rounds (S&S), alternating sides
 //   block    - count-up toward a target (mobility, walks, hikes)
-function mainStep(key,w,cfg,{deadlift=false}={}){
+function mainStep(key,w,cfg,{deadlift=false}={},opts){
   const W=cfg.W[key]||0,n=mainSets(w,deadlift);
-  return {kind:'weights',title:PX[key].name,main:key,rest:restSec(w),
+  return applyVariant({kind:'weights',title:PX[key].name,main:key,rest:restSec(w),
     rx:n+'×5'+(W?' @ '+W+' lb':' @ W'),warmup:warmupRamp(W,deadlift),
-    exs:[ex(key,{unit:'lb',sets:weightSets(n,W,5)})]};
+    exs:[ex(key,{unit:'lb',sets:weightSets(n,W,5)})]},key,W,cfg,opts);
 }
-function accStep(key,accKey,w,cfg,{reps,sets,perSide,suffix,rest}={}){
+function accStep(key,accKey,w,cfg,{reps,sets,perSide,suffix,rest}={},opts){
   reps=reps??accReps(w);sets=sets??accSets(w);
   const wt=accKey?(cfg.acc[accKey]||0):0;
-  return {kind:'weights',title:PX[key].name,acc:accKey,topReps:accKey?accTopReps(w):null,rest:rest??restSec(w),
+  const step={kind:'weights',title:PX[key].name,acc:accKey,topReps:accKey?accTopReps(w):null,rest:rest??restSec(w),
     rx:sets+'×'+reps+(perSide?'/side':'')+(suffix||'')+(wt?' @ '+wt+' lb':''),
-    exs:[ex(key,{unit:'lb',perSide:!!perSide,sets:weightSets(sets,wt,reps)})]};
+    exs:[ex(key,{unit:'lb',perSide:!!perSide,perHand:key==='latl',sets:weightSets(sets,wt,reps)})]};
+  return VARIANTS[key]?applyVariant(step,key,wt,cfg,opts):step;
 }
 function blockStep(key,mins,note){
   return {kind:'block',title:PX[key].name,targetMin:mins,rx:mins+' min'+(note?' · '+note:''),note,
     exs:[ex(key,{unit:'min',sets:[{reps:0}]})]};
+}
+// Incline walk: the vest is optional and set on the walk screen (0 = none).
+function inclWalkStep(mins,deload,cfg){
+  const vest=deload?0:(cfg.vestLb||0);
+  const st=blockStep('inclwalk',mins,deload?'easy, no vest':(vest?'vest '+vest+' lb':null));
+  st.vest=!deload;st.exs[0].sets[0].weight=vest;
+  return st;
+}
+// ~6 min core circuit for skiing: resist arching (dead bug, hollow) and
+// twisting/side-bending (side plank). Holds get 5 s longer each build week.
+function absSteps(w,rounds){
+  const add=w.kind==='build'?5*w.i:0,sp=30+add,ho=25+add;
+  const holds=(n,sec)=>Array.from({length:n},()=>({weight:0,secs:sec}));
+  return [
+    {kind:'weights',title:PX.deadbug.name,rest:20,rx:rounds+'×8/side',
+      exs:[ex('deadbug',{unit:'lb',perSide:true,sets:weightSets(rounds,0,8)})]},
+    {kind:'hold',mode:'countdown',title:PX.sideplank.name,rest:15,rx:rounds+'×'+sp+' s each side (alternate)',
+      exs:[ex('sideplank',{unit:'s',sets:holds(rounds*2,sp)})]},
+    {kind:'hold',mode:'countdown',title:PX.hollow.name,rest:20,rx:rounds+'×'+ho+' s',
+      exs:[ex('hollow',{unit:'s',sets:holds(rounds,ho)})]},
+  ];
 }
 
 const SESSION_META={
@@ -209,77 +308,83 @@ const SESSION_META={
   lowerB:{name:'Lower B',sub:'Deadlift day',cat:'lower',slot:'pm',gym:true},
   upperB:{name:'Upper B',sub:'Press day',cat:'upper',slot:'pm',gym:true},
   fullSS:{name:'Full S&S',sub:'Swings + get-ups on the clock',cat:'kb',slot:'am'},
-  lightKB:{name:'Light KB',sub:'Get-ups + easy swings',cat:'kb',slot:'am'},
+  lightKB:{name:'Light KB',sub:'Get-ups, swings, abs, stretch',cat:'kb',slot:'am'},
   hike:{name:'Long hike / ruck',sub:'60–120 min with pack',cat:'hike',slot:'am'},
   easyHike:{name:'Easy hike',sub:'60 min, light pack',cat:'hike',slot:'am'},
+  absStretch:{name:'Abs + stretch',sub:'Core circuit + long stretch',cat:'walk',slot:'am'},
   walk:{name:'Easy walk',sub:'30 min',cat:'walk',slot:'am'},
   tripDay:{name:'Walk + mobility',sub:'Keep it easy',cat:'walk',slot:'am'},
 };
 
-function buildSession(id,w,cfg){
+// opts.lastWeight(libId, unit): last logged weight, used when a lift is swapped
+// to other equipment (see applyVariant).
+function buildSession(id,w,cfg,opts){
   const meta=SESSION_META[id];if(!meta||!w)return null;
   const dl=w.kind==='deload',b=isB(w),steps=[];
-  const gymTail=()=>steps.push(blockStep('inclwalk',dl?20:25,dl?'easy, no vest':'vest '+(cfg.vestLb||0)+' lb'));
+  const gymTail=()=>steps.push(inclWalkStep(dl?20:25,dl,cfg));
   if(meta.gym){
     if(w.kind==='trip')return {...meta,id,week:w,steps:[],taper:true};
     steps.push(blockStep('mobility',10));
     if(id==='lowerA'){
       const s=dl?2:b?4:3;
       steps.push(accStep('box',null,w,cfg,{sets:s,reps:5,rest:60}));
-      steps.push(mainStep('squat',w,cfg));
-      steps.push(accStep('latl','latl',w,cfg,{perSide:true}));
+      steps.push(mainStep('squat',w,cfg,{},opts));
+      steps.push(accStep('latl','latl',w,cfg,{perSide:true},opts));
       const hold=dl?45:b?90:60;
       steps.push({kind:'hold',mode:'countdown',title:PX.wall.name,rest:60,rx:'2×'+hold+' s',
         exs:[ex('wall',{unit:'s',sets:Array.from({length:2},()=>({weight:0,secs:hold}))})]});
     }else if(id==='upperA'){
-      steps.push(mainStep('bench',w,cfg));
+      steps.push(mainStep('bench',w,cfg,{},opts));
       const s=dl?2:3,add=cfg.acc.pud||0;
       steps.push({kind:'weights',title:'Pull-up + dip superset',acc:'pud',topReps:null,rest:restSec(w),superset:true,
         rx:s+'×6 each'+(add?' +'+add+' lb':''),
         exs:[ex('pullup',{unit:'lb',sets:weightSets(s,add,6)}),ex('dip',{unit:'lb',sets:weightSets(s,add,6)})]});
       const cs=dl?2:3,cw=cfg.acc.carry||0;
-      steps.push({kind:'hold',mode:'stopwatch',title:PX.carry.name,acc:'carry',rest:60,rx:cs+'×40 m/side'+(cw?' @ '+cw+' lb':''),
-        exs:[ex('carry',{unit:'s',perSide:true,distanceM:40,sets:Array.from({length:cs},()=>({weight:cw,secs:0}))})]});
+      steps.push(applyVariant({kind:'hold',mode:'stopwatch',title:PX.carry.name,acc:'carry',rest:60,rx:cs+'×40 m/side'+(cw?' @ '+cw+' lb':''),
+        exs:[ex('carry',{unit:'s',perSide:true,distanceM:40,sets:Array.from({length:cs},()=>({weight:cw,secs:0}))})]},'carry',cw,cfg,opts));
     }else if(id==='lowerB'){
-      steps.push(mainStep('deadlift',w,cfg,{deadlift:true}));
+      steps.push(mainStep('deadlift',w,cfg,{deadlift:true},opts));
       const lower=b?5:4;
-      steps.push(accStep('stepd','stepd',w,cfg,{reps:Math.min(10,accReps(w)),perSide:true,suffix:' · '+lower+' s lower'}));
-      steps[steps.length-1].topReps=10;
+      steps.push(accStep('stepd','stepd',w,cfg,{reps:Math.min(10,accReps(w)),perSide:true,suffix:' · '+lower+' s lower'},opts));
+      if(steps[steps.length-1].acc)steps[steps.length-1].topReps=10;
       let s,r;
       if(dl){s=2;r=3}else if(w.pattern==='A'){[s,r]=[[2,3],[3,3],[3,4],[3,5]][w.i]}else{s=3;r=5}
       steps.push(accStep('nordic',null,w,cfg,{sets:s,reps:r,rest:90}));
     }else if(id==='upperB'){
-      steps.push(mainStep('ohp',w,cfg));
-      steps.push(accStep('incl','incl',w,cfg));
-      steps.push(accStep('row','row',w,cfg));
+      steps.push(mainStep('ohp',w,cfg,{},opts));
+      steps.push(accStep('incl','incl',w,cfg,{},opts));
+      steps.push(accStep('row','row',w,cfg,{},opts));
       steps.push(accStep('pallof','pallof',w,cfg,{sets:2,reps:10,perSide:true,rest:45}));
       steps[steps.length-1].topReps=null;
     }
     gymTail();
   }else if(id==='fullSS'){
     const iv=kbIntervals(w)||{swing:45,tgu:75},kg=cfg.kbKg||0;
-    steps.push(blockStep('kbwarm',5));
+    steps.push(blockStep('kbwarm',3));
     steps.push({kind:'interval',title:'Swings: 10 × 10',every:iv.swing,rounds:10,sideLabel:'hand',restAfter:60,
       rx:'10 sets of 10, every '+iv.swing+' s · '+kg+' kg',exs:[ex('swing1',{unit:'kg',sets:weightSets(10,kg,10)})]});
     steps.push({kind:'interval',title:'Get-ups: 10 singles',every:iv.tgu,rounds:10,sideLabel:'side',
       rx:'1 every '+iv.tgu+' s · '+kg+' kg',exs:[ex('tgu',{unit:'kg',sets:weightSets(10,kg,1)})]});
-    steps.push(blockStep('walk',30));
+    steps.push(blockStep('stretch',4));
   }else if(id==='lightKB'){
     const kg=cfg.kbKg||0;
+    steps.push(blockStep('kbwarm',3));
     steps.push({kind:'weights',title:'Turkish get-up',rest:0,rx:'10 singles, no clock · '+kg+' kg',
       exs:[ex('tgu',{unit:'kg',sets:weightSets(1,kg,10)})]});
     steps.push({kind:'weights',title:'Two-hand swing',rest:0,rx:'5×10 easy · '+kg+' kg',
       exs:[ex('swing2',{unit:'kg',sets:weightSets(5,kg,10)})]});
-    steps.push(blockStep('walk',30));
+    steps.push(...absSteps(w,2));
+    steps.push(blockStep('stretch',4));
   }else if(id==='hike')steps.push(blockStep('hike',90,'60–120 min with pack'));
   else if(id==='easyHike')steps.push(blockStep('hike',60,'light pack'));
+  else if(id==='absStretch'){steps.push(blockStep('mobility',3));steps.push(...absSteps(w,3));steps.push(blockStep('stretch',6))}
   else if(id==='walk')steps.push(blockStep('walk',30));
   else if(id==='tripDay'){steps.push(blockStep('mobility',20));steps.push(blockStep('walk',30))}
   return {...meta,id,week:w,steps,estMin:estimateMinutes(steps,w)};
 }
 
 // Rough session length, same assumptions as the design reference:
-// 90 s between exercises, ~25 s per main-lift set, warm-up ramp 5 min.
+// 90 s between gym exercises (30 s at home), ~25 s per main-lift set, warm-up ramp 5 min.
 function estimateMinutes(steps,w){
   let sec=0,lift=0,liftCount=0,mob=0,cardio=0;
   for(const s of steps){
@@ -288,12 +393,13 @@ function estimateMinutes(steps,w){
     if(s.kind==='interval')t=s.every*s.rounds+(s.restAfter||0);
     else if(s.kind==='hold')t=n*(s.exs[0].sets[0].secs||60)*(s.exs[0].perSide?2:1)+(n-1)*r;
     else{
-      const reps=s.exs[0].sets[0].reps||5,perRep=s.main?5:s.superset?4.5:4;
+      const reps=s.exs[0].sets[0].reps||5,perRep=s.exs[0].key==='tgu'?50:s.main?5:s.superset?4.5:4;
       t=n*reps*perRep*(s.exs[0].perSide?2:1)*s.exs.length+(n-1)*r+(s.main?300:0);
     }
     lift+=t;liftCount++;
   }
-  if(liftCount>1)lift+=(liftCount-1)*90;
+  // Changeovers: ~90 s in the gym, ~30 s at home with one bell.
+  if(liftCount>1)lift+=(liftCount-1)*(steps.some(s=>s.main)?90:30);
   sec=mob+lift+cardio;
   return {total:Math.round(sec/60),mob:Math.round(mob/60),lift:Math.round(lift/60),cardio:Math.round(cardio/60)};
 }
@@ -304,10 +410,10 @@ function weekLayout(w){
   if(w.kind==='trip')return Array.from({length:7},()=>({am:'tripDay',pm:null}));
   if(w.kind==='deload')return [
     {am:'lightKB',pm:'lowerA'},{am:'lightKB',pm:'upperA'},{am:'lightKB',pm:null},
-    {am:'lightKB',pm:'lowerB'},{am:'lightKB',pm:'upperB'},{am:'easyHike',pm:null},{am:'walk',pm:'rest'}];
+    {am:'lightKB',pm:'lowerB'},{am:'lightKB',pm:'upperB'},{am:'easyHike',pm:null},{am:'absStretch',pm:'rest'}];
   return [
     {am:'lightKB',pm:'lowerA'},{am:'fullSS',pm:'upperA'},{am:'fullSS',pm:null},
-    {am:'lightKB',pm:'lowerB'},{am:'fullSS',pm:'upperB'},{am:'hike',pm:null},{am:'walk',pm:'rest'}];
+    {am:'lightKB',pm:'lowerB'},{am:'fullSS',pm:'upperB'},{am:'hike',pm:null},{am:'absStretch',pm:'rest'}];
 }
 
 function todayPlan(date,cfg){
@@ -328,7 +434,7 @@ function nextCycleProposal(cfg){
     cycle:(cfg.cycleStarted||1)+1,
     W:{squat:(cfg.W.squat||0)+CYCLE_INCREMENTS.squat,deadlift:(cfg.W.deadlift||0)+CYCLE_INCREMENTS.deadlift,
        bench:(cfg.W.bench||0)+CYCLE_INCREMENTS.bench,ohp:(cfg.W.ohp||0)+CYCLE_INCREMENTS.ohp},
-    acc,kbKg:(cfg.kbKg||0)+CYCLE_INCREMENTS.kbKg,vestLb:(cfg.vestLb||0)+CYCLE_INCREMENTS.vestLb,
+    acc,kbKg:(cfg.kbKg||0)+CYCLE_INCREMENTS.kbKg,vestLb:cfg.vestLb?cfg.vestLb+CYCLE_INCREMENTS.vestLb:0,
   };
 }
 
@@ -339,6 +445,6 @@ function hitTopOfRange(step,loggedSets){
   return sets.length>=step.exs[0].sets.length&&sets.every(s=>(s.reps||0)>=step.topReps);
 }
 
-if(typeof module!=='undefined')module.exports={DEFAULT_PROGRAM,CYCLE_INCREMENTS,PX,PROGRAM_EXERCISES,MAIN_LIFTS,ACCESSORIES,KG_TO_LB,
+if(typeof module!=='undefined')module.exports={DEFAULT_PROGRAM,VARIANTS,EQUIP_LABEL,applyVariant,estimateVariantWeight,CYCLE_INCREMENTS,PX,PROGRAM_EXERCISES,MAIN_LIFTS,ACCESSORIES,KG_TO_LB,
   parseDay,fmtDay,addDays,weekAt,locate,weekForDate,timelineWeeks,mainSets,accReps,accSets,restSec,kbIntervals,warmupRamp,
   buildSession,weekLayout,todayPlan,needsNextCycle,nextCycleProposal,hitTopOfRange,SESSION_META,estimateMinutes};
