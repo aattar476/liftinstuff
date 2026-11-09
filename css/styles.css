@@ -370,3 +370,6 @@ details.card summary{min-height:var(--tap);display:flex;align-items:center;curso
 .text-sm{font-size:.85rem}.text-xs{font-size:.72rem}.fw-700{font-weight:600}.w-full{width:100%}
 
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation-duration:.01s!important}}
+.mac-status{font-size:.85rem;color:var(--muted);margin:6px 0 10px}
+.mac-status.ok{color:var(--good)}
+.mac-status.bad{color:var(--yellow)}

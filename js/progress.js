@@ -152,9 +152,17 @@ function renderMore(){
     </section>
     <section><h2>Your data</h2>
       <div class="card">
-        <p class="muted mb-8">Everything lives on this phone${fbDb?' and is backed up to Firebase':''}. ${state.lastExport?'Last export: '+fmtDate(state.lastExport)+'.':'Not exported yet.'} ${state.storagePersisted?'Storage is marked persistent.':'The browser may clear storage if the phone runs low on space.'}</p>
+        <p class="muted mb-8">Everything lives on this phone. ${state.lastExport?'Last backup: '+fmtDate(state.lastExport)+'.':'Not backed up yet.'} ${state.storagePersisted?'Storage is marked persistent.':'The browser may clear storage if the phone runs low on space.'}</p>
         <button class="btn mb-8" onclick="exportData()">Export all data</button>
-        <label class="btn btn-outline">Import from a file<input type="file" accept="application/json,.json" style="display:none" onchange="pickImport(event)"></label>
+        <label class="btn btn-outline mb-8">Import from a file<input type="file" accept="application/json,.json" style="display:none" onchange="pickImport(event)"></label>
+      </div>
+      <div class="card">
+        <h3>Send to Mac</h3>
+        <p class="muted mb-8">After every workout the app sends everything to your Mac mini over Tailscale, which builds a dataset you can query (SQLite + CSV).</p>
+        <label class="field"><span>Mac address</span><span class="field-in"><input type="url" inputmode="url" autocapitalize="off" spellcheck="false" style="width:190px;text-align:left" data-sid="mac-url" value="${esc(state.macUrl)}" placeholder="https://….ts.net:8443" onchange="setMacUrl(this.value)"></span></label>
+        ${state.macUrl?`<p class="mac-status ${state.macSync&&state.macSync.ok?'ok':state.macSync&&state.macSync.error?'bad':''}">${
+          !state.macSync?'Not sent yet.':state.macSync.ok?'Last sent '+fmtDate(state.macSync.at)+' · '+state.macSync.workouts+' workouts on the Mac':esc(state.macSync.error||'')+(state.macSync.pending?' Will retry.':'')}</p>
+        <button class="btn btn-outline" onclick="syncToMac(true)">Send now</button>`:''}
       </div>
       ${state.backups.length?`<div class="card"><h3>Saved backups on this phone</h3>${state.backups.map(b=>`<div class="kv"><span>${esc(b.reason||'Backup')}<small class="muted">${fmtDate(b.createdAt)}</small></span><button class="btn btn-sm btn-outline" onclick="downloadBackup('${b.id}')">Download</button></div>`).join('')}</div>`:''}
       ${archive.length?`<details class="card"><summary>Old templates (${archive.length}, read-only)</summary>${archive.map(t=>`<div class="kv"><span>${esc(t.name)}</span><span class="muted">${(t.exercises||[]).map(e=>esc(e.name)).join(', ')}</span></div>`).join('')}</details>`:''}

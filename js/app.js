@@ -246,7 +246,7 @@ let state={
   tab:'today',
   // program settings (see js/program.js DEFAULT_PROGRAM)
   program:JSON.parse(JSON.stringify(DEFAULT_PROGRAM)),homeWeekIdx:null,
-  lastExport:null,pendingBackup:null,backups:[],storagePersisted:false,
+  lastExport:null,pendingBackup:null,backups:[],storagePersisted:false,macUrl:'',macSync:null,
   subPage:null,
   // workout session
   session:null, // {id,name,startTime,exercises:[{exerciseId,name,body,equip,sets:[{weight,reps,done}]}],currentExIdx:0}
@@ -1706,6 +1706,49 @@ async function exportData(){
 }
 
 // ============================================================
+// MAC SYNC (Tailscale)
+// ============================================================
+// After every change the full export goes to the receiver on the Mac mini
+// (tools/lift_receiver.py), which keeps dated copies and a SQLite/CSV dataset.
+// If the Mac can't be reached (Tailscale off, no signal) it's marked pending
+// and retried when the app opens or comes back to the screen.
+let macSyncTimer=null,macSyncBusy=false;
+function queueMacSync(){if(!state.macUrl)return;clearTimeout(macSyncTimer);macSyncTimer=setTimeout(()=>syncToMac(false),1500)}
+async function saveMacSync(){await dbPut('settings',{key:'macSync',value:state.macSync})}
+async function syncToMac(manual){
+  if(!state.macUrl||macSyncBusy)return;
+  macSyncBusy=true;
+  state.macSync={...(state.macSync||{}),pending:true};await saveMacSync();
+  try{
+    const exp=await exportAllData(),ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),20000);
+    const r=await fetch(state.macUrl.replace(/\/+$/,'')+'/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(exp),signal:ctl.signal});
+    clearTimeout(to);
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){
+      state.macSync={at:new Date().toISOString(),ok:true,workouts:j.workouts,pending:false};
+      // A copy off the phone counts as a backup for the 14-day reminder.
+      state.lastExport=exp.exportedAt;await dbPut('settings',{key:'lastExport',value:exp.exportedAt});
+      if(manual)toast('Sent to Mac: '+j.workouts+' workouts');
+    }else{
+      // 409 = the Mac kept its bigger dataset; the upload was still saved there.
+      state.macSync={...state.macSync,ok:false,error:j.error||('Mac replied '+r.status),pending:r.status!==409&&r.status!==400};
+      if(manual)toast(state.macSync.error);
+    }
+  }catch(e){
+    state.macSync={...state.macSync,ok:false,error:'Mac not reachable. Is Tailscale on?',pending:true};
+    if(manual)toast(state.macSync.error);
+  }
+  macSyncBusy=false;await saveMacSync();
+  if(state.tab==='more'&&!state.subPage)render();
+}
+async function setMacUrl(v){
+  v=(v||'').trim().replace(/\/+$/,'');
+  if(v&&!/^https?:\/\//.test(v))v='https://'+v;
+  state.macUrl=v;await dbPut('settings',{key:'macUrl',value:v});
+  render();if(v)syncToMac(true);
+}
+
+// ============================================================
 // EVENT BINDING
 // ============================================================
 function attachEvents(){
@@ -1810,6 +1853,7 @@ document.addEventListener('visibilitychange',()=>{
   if(state.intervalTimer&&state.intervalTimer.phase==='running'){requestWakeLock();intervalTimerTick()}
   if(state.session&&state.session.kind!=='program'&&state.timerRunning)render();
   checkAutoStop();
+  if(state.macSync&&state.macSync.pending)syncToMac(false);
 });
 
 // ============================================================
@@ -1819,6 +1863,7 @@ document.addEventListener('visibilitychange',()=>{
 // device switches, or code updates. Restore runs on init if local is empty.
 
 function backupToFirebase(){
+  queueMacSync();
   if(!fbDb||!currentUser)return;
   const ref=fbDb.ref('users/'+currentUser);
   const data={
@@ -1932,6 +1977,8 @@ async function initApp(){
   if(alerts)Object.assign(alertPrefs,alerts.value);
   const lastExport=await dbGet('settings','lastExport');
   state.lastExport=lastExport?lastExport.value:null;
+  const macUrl=await dbGet('settings','macUrl'),macSync=await dbGet('settings','macSync');
+  state.macUrl=macUrl?macUrl.value:'';state.macSync=macSync?macSync.value:null;
   state.backups=(await dbGetAll('backups')).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
   state.pendingBackup=state.backups.find(b=>!b.acknowledged&&b.fromVersion<3)||null;
 
@@ -1939,6 +1986,9 @@ async function initApp(){
   await seedProgramTemplates();
 
   // Ask the browser not to evict our data under storage pressure.
+  // Catch up a Mac sync that didn't get through, or one a day.
+  if(state.macUrl&&(!state.macSync||state.macSync.pending||daysSince(state.macSync.at||0)>=1))setTimeout(()=>syncToMac(false),3000);
+
   if(navigator.storage&&navigator.storage.persist){
     try{state.storagePersisted=await navigator.storage.persisted()||await navigator.storage.persist()}catch(e){}
   }
