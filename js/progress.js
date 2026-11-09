@@ -93,7 +93,8 @@ function renderLiftDetail(){
   if(!tops.length)return '<p class="muted">No logged sets yet.</p>';
   const best=tops.filter(t=>t.best).pop();
   return `<div class="sel-banner"><strong>${esc(ex?ex.name:tops[0].workout)}</strong><span class="num">best ${best.weight} ${best.unit} × ${best.reps}</span><span class="focus">${tops.length} sessions</span></div>
-    <div class="chart">${svgLineChart(tops.map(t=>({x:new Date(t.date),y:t.lb,best:t.best})),{unit:'lb'})}</div>
+    <div class="chart">${(()=>{const kg=tops.every(t=>t.unit==='kg');   // kettlebell lifts stay in kg
+      return svgLineChart(tops.map(t=>({x:new Date(t.date),y:kg?t.weight:t.lb,best:t.best})),{unit:kg?'kg':'lb'})})()}</div>
     <table class="sets"><thead><tr><th>Date</th><th>Top set</th><th>Session</th></tr></thead><tbody>
     ${tops.slice().reverse().map(t=>`<tr><td class="num">${shortDate(t.date)}</td><td class="rx">${t.weight} ${t.unit} × ${t.reps}${t.best?'<span class="badge">new best</span>':''}</td><td class="muted"><button class="link" onclick="viewWorkout('${t.wid}')">${esc(t.workout)}</button></td></tr>`).join('')}
     </tbody></table>`;

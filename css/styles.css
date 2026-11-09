@@ -231,7 +231,7 @@ tr.muted td{color:var(--muted)}
 .equip-row button:disabled{opacity:.4}
 .est-note{font-size:.85rem;color:var(--yellow);margin:0}
 .skip-link{justify-self:center;min-height:var(--tap);padding:0 16px;background:transparent;color:var(--muted);text-decoration:underline;text-underline-offset:3px;font-size:.9rem}
-.vest-field{border-bottom:0;padding:0}
+.vest-field,.bell-field{border-bottom:0;padding:0}
 .ex-note{margin:0 0 8px;color:var(--muted);font-style:italic}
 .dock{background:var(--surface);border-top:1px solid var(--line);padding:8px max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:grid;gap:8px}
 .dock-nav{display:flex;gap:8px}

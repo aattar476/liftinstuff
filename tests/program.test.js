@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict');
 const P=require('../js/program.js');
 
-const cfg={...P.DEFAULT_PROGRAM,W:{squat:200,bench:150,deadlift:250,ohp:100},acc:{latl:30,pud:0,carry:50,stepd:0,incl:95,row:100,pallof:30},kbKg:20,vestLb:15};
+const cfg={...P.DEFAULT_PROGRAM,W:{squat:200,bench:150,deadlift:250,ohp:100},acc:{latl:30,carry:50,stepd:0,incl:95,row:100,pallof:30},kbKg:20,vestLb:15};
 const at=s=>P.parseDay(s);
 const rxOf=(sess,key)=>{const st=sess.steps.find(s=>s.exs.some(e=>e.key===key));return st};
 const setsReps=(st,i=0)=>st.exs[i].sets.length+'×'+(st.exs[i].sets[0].reps??st.exs[i].sets[0].secs);
@@ -69,7 +69,7 @@ const stepd=d=>rxOf(P.buildSession('lowerB',W(d),cfg),'stepd');
 assert.equal(setsReps(stepd('2026-11-09')),'3×10');                    // capped at 10 reps
 assert.match(stepd('2026-10-26').rx,/4 s lower/);assert.match(stepd('2026-11-30').rx,/5 s lower/);
 const sup=rxOf(P.buildSession('upperA',W('2026-10-26'),cfg),'pullup');
-assert.equal(sup.exs.length,2);assert.equal(setsReps(sup,0),'3×6');assert.equal(setsReps(sup,1),'3×6');
+assert.equal(sup.exs.length,2);assert.equal(setsReps(sup,0),'3×5');assert.equal(setsReps(sup,1),'3×8');
 const carry=rxOf(P.buildSession('upperA',W('2026-10-26'),cfg),'carry');
 assert.equal(carry.exs[0].sets.length,3);assert.equal(carry.rest,60);assert.match(carry.rx,/40 m\/side/);
 const pallof=rxOf(P.buildSession('upperB',W('2026-10-26'),cfg),'pallof');
@@ -148,3 +148,28 @@ assert.equal(carryKB.exs[0].unit,'s');assert.equal(carryKB.exs[0].wUnit,'kg');as
 assert.equal(P.buildSession('upperA',w0,{...cfg,equip:{bench:'bogus'}},{}).steps[1].equipCur,'bb');
 
 console.log('program engine: swaps, vest, abs mornings passed');
+
+// Pull-ups / dips: own reps and weight, +1 rep when every set hits, then +5 lb.
+const supOf=c=>P.buildSession('upperA',w0,c).steps[2];
+let su=supOf(cfg);assert.equal(su.rx,'3×5 pull-ups · 3×8 dips');assert.equal(su.addWeight,true);assert.equal(su.bwPlan,true);
+assert.deepEqual(su.exs.map(e=>e.sets[0].reps),[5,8]);
+su=supOf({...cfg,bw:{pullup:{reps:7,add:5},dip:{reps:10,add:0}}});assert.equal(su.rx,'3×7 pull-ups +5 lb · 3×10 dips');assert.equal(su.exs[0].sets[0].weight,5);
+assert.equal(P.buildSession('upperA',W('2026-11-23'),cfg).steps[2].bwPlan,false);   // no progression on deload
+const done=(r)=>r.map(n=>({done:true,reps:n}));
+assert.deepEqual(P.bwNext('pullup',{reps:5},done([5,5,5])),{reps:6});
+assert.equal(P.bwNext('pullup',{reps:5},done([5,5,4])),null);
+assert.equal(P.bwNext('pullup',{reps:5},[{done:true,reps:5},{done:false,reps:5}]),null);
+assert.deepEqual(P.bwNext('pullup',{reps:8},done([8,8,8])),{suggestAdd:true});
+assert.deepEqual(P.bwNext('dip',{reps:11},done([12,11,11])),{reps:12});
+
+// Nordic curls take added weight, starting from the last used.
+const nd=P.buildSession('lowerB',w0,cfg,{lastWeight:id=>id==='h9'?10:null}).steps.find(s=>s.exs[0].key==='nordic');
+assert.equal(nd.addWeight,true);assert.equal(nd.exs[0].sets[0].weight,10);assert.ok(/\+10 lb$/.test(nd.rx));
+
+// Swing style: S&S one-arm by default, light KB two-hand; both switchable.
+const ssSw=c=>P.buildSession('fullSS',w0,c).steps[1],lkSw=c=>P.buildSession('lightKB',w0,c).steps[2];
+assert.equal(ssSw(cfg).exs[0].key,'swing1');assert.equal(ssSw(cfg).sideLabel,'hand');assert.equal(ssSw(cfg).equipCur,'1h');
+assert.equal(ssSw({...cfg,equip:{swingSS:'2h'}}).exs[0].key,'swing2');assert.equal(ssSw({...cfg,equip:{swingSS:'2h'}}).sideLabel,null);
+assert.equal(lkSw(cfg).exs[0].key,'swing2');assert.equal(lkSw({...cfg,equip:{swingLight:'1h'}}).title,'One-arm swing');
+
+console.log('program engine: pull-up plan, nordic weight, swing style passed');

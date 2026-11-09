@@ -19,11 +19,13 @@ const DEFAULT_PROGRAM={
   tripWeeks:1,
   cycleStarted:1,         // which cycle's weights are currently loaded
   W:{squat:0,bench:0,deadlift:0,ohp:0},
-  acc:{latl:0,pud:0,carry:0,stepd:0,incl:0,row:0,pallof:0},
+  acc:{latl:0,carry:0,stepd:0,incl:0,row:0,pallof:0},
+  // Pull-ups and dips: reps per set climb 1 a week (see BW_PLAN), then weight.
+  bw:{pullup:{reps:5,add:0},dip:{reps:8,add:0}},
   accReady:{},            // accessories that hit the top of their rep range: suggest +weight
   kbKg:16,
   vestLb:0,               // incline-walk vest; 0 = no vest (set on the walk screen)
-  equip:{},               // equipment swaps that stick, e.g. {bench:'db'} (see VARIANTS)
+  equip:{},               // swaps that stick, e.g. {bench:'db', swingSS:'2h'} (see VARIANTS)
   cycleHistory:[],
 };
 
@@ -190,7 +192,16 @@ const PROGRAM_EXERCISES=[
 // exercise, so DB bench progress is tracked apart from barbell bench. `f` is
 // the rough fraction of the program weight (lb) used to estimate a first
 // weight when there's no history for that variant (per hand where perHand).
-const EQUIP_LABEL={bb:'Barbell',db:'Dumbbell',kb:'Kettlebell',cable:'Cable'};
+const EQUIP_LABEL={bb:'Barbell',db:'Dumbbell',kb:'Kettlebell',cable:'Cable','1h':'One-arm','2h':'Two-hand'};
+
+// Pull-up / dip growth: hit the target on every set and next session's target
+// is 1 rep higher; at the top, add 5 lb and drop back to the start.
+const BW_PLAN={pullup:{start:5,top:8,label:'Pull-ups'},dip:{start:8,top:12,label:'Dips'}};
+function bwNext(key,cur,sets){
+  const plan=BW_PLAN[key];if(!plan||!sets.length)return null;
+  if(!sets.every(x=>x.done&&(x.reps||0)>=cur.reps))return null;
+  return cur.reps>=plan.top?{suggestAdd:true}:{reps:cur.reps+1};
+}
 const VARIANTS={
   squat:{base:'bb',opts:{bb:null,
     db:{name:'Dumbbell squat',libId:'ssb_dbsquat',equip:'Dumbbell',perHand:true,f:.3,cue:'Dumbbells at the shoulders or hanging; sit between your heels.'},
@@ -248,7 +259,7 @@ function applyVariant(step,key,baseLb,cfg,opts){
 }
 
 const MAIN_LIFTS=['squat','bench','deadlift','ohp'];
-const ACCESSORIES={latl:'Lateral lunge (DB each hand)',pud:'Pull-up / dip added weight',carry:'Suitcase carry DB',stepd:'Step-down DB',incl:'Incline bench',row:'Seated row',pallof:'Pallof press'};
+const ACCESSORIES={latl:'Lateral lunge (DB each hand)',carry:'Suitcase carry DB',stepd:'Step-down DB',incl:'Incline bench',row:'Seated row',pallof:'Pallof press'};
 const KG_TO_LB=2.20462;
 
 function ex(key,extra){
@@ -335,10 +346,12 @@ function buildSession(id,w,cfg,opts){
         exs:[ex('wall',{unit:'s',sets:Array.from({length:2},()=>({weight:0,secs:hold}))})]});
     }else if(id==='upperA'){
       steps.push(mainStep('bench',w,cfg,{},opts));
-      const s=dl?2:3,add=cfg.acc.pud||0;
-      steps.push({kind:'weights',title:'Pull-up + dip superset',acc:'pud',topReps:null,rest:restSec(w),superset:true,
-        rx:s+'×6 each'+(add?' +'+add+' lb':''),
-        exs:[ex('pullup',{unit:'lb',sets:weightSets(s,add,6)}),ex('dip',{unit:'lb',sets:weightSets(s,add,6)})]});
+      const s=dl?2:3,bw=cfg.bw||DEFAULT_PROGRAM.bw;
+      const pu=bw.pullup||DEFAULT_PROGRAM.bw.pullup,dp=bw.dip||DEFAULT_PROGRAM.bw.dip;
+      const part=(n,o,lbl)=>s+'×'+o.reps+' '+lbl+(o.add?' +'+o.add+' lb':'');
+      steps.push({kind:'weights',title:'Pull-up + dip superset',acc:null,topReps:null,rest:restSec(w),superset:true,addWeight:true,bwPlan:!dl,
+        rx:part(s,pu,'pull-ups')+' · '+part(s,dp,'dips'),
+        exs:[ex('pullup',{unit:'lb',sets:weightSets(s,pu.add||0,pu.reps)}),ex('dip',{unit:'lb',sets:weightSets(s,dp.add||0,dp.reps)})]});
       const cs=dl?2:3,cw=cfg.acc.carry||0;
       steps.push(applyVariant({kind:'hold',mode:'stopwatch',title:PX.carry.name,acc:'carry',rest:60,rx:cs+'×40 m/side'+(cw?' @ '+cw+' lb':''),
         exs:[ex('carry',{unit:'s',perSide:true,distanceM:40,sets:Array.from({length:cs},()=>({weight:cw,secs:0}))})]},'carry',cw,cfg,opts));
@@ -349,7 +362,11 @@ function buildSession(id,w,cfg,opts){
       if(steps[steps.length-1].acc)steps[steps.length-1].topReps=10;
       let s,r;
       if(dl){s=2;r=3}else if(w.pattern==='A'){[s,r]=[[2,3],[3,3],[3,4],[3,5]][w.i]}else{s=3;r=5}
-      steps.push(accStep('nordic',null,w,cfg,{sets:s,reps:r,rest:90}));
+      const nd=accStep('nordic',null,w,cfg,{sets:s,reps:r,rest:90});
+      // Optional added weight (plate held to the chest); starts from what you used last.
+      const nw=(opts&&opts.lastWeight&&opts.lastWeight(PX.nordic.libId,'lb'))||0;
+      nd.addWeight=true;for(const x of nd.exs[0].sets)x.weight=nw;if(nw)nd.rx+=' +'+nw+' lb';
+      steps.push(nd);
     }else if(id==='upperB'){
       steps.push(mainStep('ohp',w,cfg,{},opts));
       steps.push(accStep('incl','incl',w,cfg,{},opts));
@@ -361,18 +378,22 @@ function buildSession(id,w,cfg,opts){
   }else if(id==='fullSS'){
     const iv=kbIntervals(w)||{swing:45,tgu:75},kg=cfg.kbKg||0;
     steps.push(blockStep('kbwarm',3));
-    steps.push({kind:'interval',title:'Swings: 10 × 10',every:iv.swing,rounds:10,sideLabel:'hand',restAfter:60,
-      rx:'10 sets of 10, every '+iv.swing+' s · '+kg+' kg',exs:[ex('swing1',{unit:'kg',sets:weightSets(10,kg,10)})]});
-    steps.push({kind:'interval',title:'Get-ups: 10 singles',every:iv.tgu,rounds:10,sideLabel:'side',
+    const two=((cfg.equip||{}).swingSS||'1h')==='2h';
+    steps.push({kind:'interval',title:'Swings: 10 × 10'+(two?' two-hand':''),every:iv.swing,rounds:10,sideLabel:two?null:'hand',restAfter:60,
+      swap:'swingSS',equipOpts:['1h','2h'],equipCur:two?'2h':'1h',kb:true,
+      rx:'10 sets of 10, every '+iv.swing+' s · '+kg+' kg',exs:[ex(two?'swing2':'swing1',{unit:'kg',sets:weightSets(10,kg,10)})]});
+    steps.push({kind:'interval',title:'Get-ups: 10 singles',every:iv.tgu,rounds:10,sideLabel:'side',kb:true,
       rx:'1 every '+iv.tgu+' s · '+kg+' kg',exs:[ex('tgu',{unit:'kg',sets:weightSets(10,kg,1)})]});
     steps.push(blockStep('stretch',4));
   }else if(id==='lightKB'){
     const kg=cfg.kbKg||0;
     steps.push(blockStep('kbwarm',3));
-    steps.push({kind:'weights',title:'Turkish get-up',rest:0,rx:'10 singles, no clock · '+kg+' kg',
+    steps.push({kind:'weights',title:'Turkish get-up',rest:0,rx:'10 singles, no clock · '+kg+' kg',kb:true,
       exs:[ex('tgu',{unit:'kg',sets:weightSets(1,kg,10)})]});
-    steps.push({kind:'weights',title:'Two-hand swing',rest:0,rx:'5×10 easy · '+kg+' kg',
-      exs:[ex('swing2',{unit:'kg',sets:weightSets(5,kg,10)})]});
+    const one=((cfg.equip||{}).swingLight||'2h')==='1h';
+    steps.push({kind:'weights',title:one?'One-arm swing':'Two-hand swing',rest:0,rx:'5×10 easy'+(one?', alternate hands':'')+' · '+kg+' kg',
+      swap:'swingLight',equipOpts:['1h','2h'],equipCur:one?'1h':'2h',kb:true,
+      exs:[ex(one?'swing1':'swing2',{unit:'kg',sets:weightSets(5,kg,10)})]});
     steps.push(...absSteps(w,2));
     steps.push(blockStep('stretch',4));
   }else if(id==='hike')steps.push(blockStep('hike',90,'60–120 min with pack'));
@@ -445,6 +466,6 @@ function hitTopOfRange(step,loggedSets){
   return sets.length>=step.exs[0].sets.length&&sets.every(s=>(s.reps||0)>=step.topReps);
 }
 
-if(typeof module!=='undefined')module.exports={DEFAULT_PROGRAM,VARIANTS,EQUIP_LABEL,applyVariant,estimateVariantWeight,CYCLE_INCREMENTS,PX,PROGRAM_EXERCISES,MAIN_LIFTS,ACCESSORIES,KG_TO_LB,
+if(typeof module!=='undefined')module.exports={DEFAULT_PROGRAM,VARIANTS,EQUIP_LABEL,BW_PLAN,bwNext,applyVariant,estimateVariantWeight,CYCLE_INCREMENTS,PX,PROGRAM_EXERCISES,MAIN_LIFTS,ACCESSORIES,KG_TO_LB,
   parseDay,fmtDay,addDays,weekAt,locate,weekForDate,timelineWeeks,mainSets,accReps,accSets,restSec,kbIntervals,warmupRamp,
   buildSession,weekLayout,todayPlan,needsNextCycle,nextCycleProposal,hitTopOfRange,SESSION_META,estimateMinutes};

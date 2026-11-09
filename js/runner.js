@@ -153,13 +153,31 @@ function completeStep(si){
     state.program.accReady[step.acc]=true;saveProgram();
     s.suggest.push({acc:step.acc,text:step.title+': every set hit '+step.topReps+' reps. Add 5 lb and drop back to the bottom of the range.'});
   }
+  if(step.bwPlan&&!step._bwApplied){step._bwApplied=true;progressBodyweight(step)}
   if(si===s.stepIdx&&si<s.steps.length-1)s.stepIdx=si+1;
+}
+
+// Pull-ups / dips: remember the added weight used; every set at target means
+// +1 rep next session, and at the top of the plan suggest +5 lb (BW_PLAN).
+function progressBodyweight(step){
+  const p=state.program;p.bw=p.bw||JSON.parse(JSON.stringify(DEFAULT_PROGRAM.bw));
+  const notes=[];
+  for(const e of step.exs){
+    const plan=BW_PLAN[e.key];if(!plan)continue;
+    const cur=p.bw[e.key]=p.bw[e.key]||{reps:plan.start,add:0};
+    cur.add=Math.max(0,...e.sets.filter(x=>x.done).map(x=>x.weight||0));
+    const r=bwNext(e.key,cur,e.sets);
+    if(r&&r.reps){cur.reps=r.reps;notes.push(plan.label+' '+r.reps)}
+    else if(r&&r.suggestAdd)state.session.suggest.push({bw:e.key,text:plan.label+': every set hit '+cur.reps+'. Add 5 lb and go back to '+plan.start+' reps next time.'});
+  }
+  saveProgram();
+  if(notes.length)toast('Next time: '+notes.join(' · ')+' per set');
 }
 
 async function applySuggestion(i){
   const sug=state.session.suggest[i];if(!sug)return;
-  state.program.acc[sug.acc]=(state.program.acc[sug.acc]||0)+5;
-  delete state.program.accReady[sug.acc];
+  if(sug.bw){const b=state.program.bw[sug.bw];b.add=(b.add||0)+5;b.reps=BW_PLAN[sug.bw].start}
+  else{state.program.acc[sug.acc]=(state.program.acc[sug.acc]||0)+5;delete state.program.accReady[sug.acc]}
   await saveProgram();
   state.session.suggest.splice(i,1);saveSession();render();
 }
@@ -185,6 +203,28 @@ function startInterval(si){
   setTimer(makeTimer('interval',{every:step.every,rounds:step.rounds,ctx:{step:si}}));
   playEvents(timerEvents(state.session.timer));   // round 1 beep now
   saveSession();render();
+}
+// Log every round as done, with or without the timer (going faster than the clock).
+function logIntervalAll(si){
+  const s=state.session,step=s.steps[si],t=s.timer;unskip(si);
+  if(t&&t.type==='interval'&&t.ctx.step===si)s.timer=null;
+  step.exs[0].sets.forEach(x=>x.done=true);
+  completeStep(si);ensureRunTicker();
+  if(step.restAfter&&t&&t.ctx&&t.ctx.step===si)startRest(step.restAfter,'Rest, then get-ups');
+  saveSession();render();
+}
+// Bell weight (kg) for every kettlebell step not yet logged; saved as your bell.
+function setBell(val){
+  const v=Math.max(0,parseFloat(val)||0);if(!v)return;
+  for(const st of state.session.steps){
+    if(!st.kb)continue;
+    for(const e of st.exs)for(const x of e.sets)if(!x.done)x.weight=v;
+    st.rx=st.rx.replace(/· [\d.]+ kg/,'· '+v+' kg');
+  }
+  state.program.kbKg=v;saveProgram();saveSession();render();
+}
+function bellField(step){
+  return `<label class="field bell-field"><span>Bell</span><span class="field-in"><input type="number" inputmode="decimal" data-sid="bell" value="${step.exs[0].sets[0].weight||''}" placeholder="kg" onfocus="this.select()" onchange="setBell(this.value)"><span class="unit">kg</span></span></label>`;
 }
 function stopIntervalEarly(){
   const t=state.session.timer;if(!t)return;
@@ -371,12 +411,12 @@ function renderWeightRows(step,si){
     const x=e.sets[i],unit=(e.unit==='kg'?'kg':'lb')+(e.perHand?' ea':'');
     rows.push(`<tr class="${x.done?'done':''}">
       <td class="sn num">${i+1}${step.exs.length>1?`<small>${esc(e.name.split(' ')[0])}</small>`:''}</td>
-      <td>${e.equip==='Bodyweight'&&!step.acc?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="${esc(e.name)} set ${i+1} ${unit}" data-sid="rw-${si}-${ei}-${i}" value="${x.weight||0}" onchange="editSet(${si},${ei},${i},'weight',this.value)"><span class="unit">${unit}</span>`}</td>
-      <td><input class="set-input" type="number" inputmode="numeric" aria-label="${esc(e.name)} set ${i+1} reps" data-sid="rr-${si}-${ei}-${i}" value="${x.reps||0}" onchange="editSet(${si},${ei},${i},'reps',this.value)"><span class="unit">${e.perSide?'/side':'reps'}</span></td>
+      <td>${e.equip==='Bodyweight'&&!step.acc&&!step.addWeight?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="${esc(e.name)} set ${i+1} ${unit}" data-sid="rw-${si}-${ei}-${i}" value="${x.weight||''}" placeholder="${step.addWeight?'+0':'0'}" onfocus="this.select()" onchange="editSet(${si},${ei},${i},'weight',this.value)"><span class="unit">${step.addWeight&&e.equip==='Bodyweight'?'+lb':unit}</span>`}</td>
+      <td><input class="set-input" type="number" inputmode="numeric" aria-label="${esc(e.name)} set ${i+1} reps" data-sid="rr-${si}-${ei}-${i}" value="${x.reps||''}" placeholder="0" onfocus="this.select()" onchange="editSet(${si},${ei},${i},'reps',this.value)"><span class="unit">${e.perSide?'/side':'reps'}</span></td>
       <td class="ck"><button class="set-check ${x.done?'done':''}" aria-label="${x.done?'Undo':'Log'} set ${i+1}" onclick="toggleSetDone(${si},${ei},${i})">${x.done?icons.check:''}</button>${x.pr?'<span class="badge">new best</span>':''}</td>
     </tr>`);
   });
-  return `<table class="sets run-sets"><thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="r">Log</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+  return `${step.kb?bellField(step):''}<table class="sets run-sets"><thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="r">Log</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
 }
 
 function renderHold(step,si,t){
@@ -388,7 +428,7 @@ function renderHold(step,si,t){
       ${t.type==='stopwatch'?`<button class="btn" onclick="stopHold()">Stop + log</button>`:`<button class="btn" onclick="stopHold()">Done early</button>`}</div></div>`:'';
   const rows=e.sets.map((x,i)=>`<tr class="${x.done?'done':''}">
       <td class="sn num">${i+1}</td>
-      <td>${e.equip==='Bodyweight'?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="Set ${i+1} lb" data-sid="hw-${si}-${i}" value="${x.weight||0}" onchange="editSet(${si},0,${i},'weight',this.value)"><span class="unit">${e.wUnit||'lb'}</span>`}</td>
+      <td>${e.equip==='Bodyweight'?'<span class="muted">bodyweight</span>':`<input class="set-input" type="number" inputmode="decimal" aria-label="Set ${i+1} lb" data-sid="hw-${si}-${i}" value="${x.weight||''}" placeholder="0" onfocus="this.select()" onchange="editSet(${si},0,${i},'weight',this.value)"><span class="unit">${e.wUnit||'lb'}</span>`}</td>
       <td class="num">${x.done?x.secs+' s':step.mode==='stopwatch'?(e.distanceM||40)+' m/side':x.secs+' s'}</td>
       <td class="ck">${x.done?`<button class="set-check done" aria-label="Undo set ${i+1}" onclick="toggleSetDone(${si},0,${i})">${icons.check}</button>`:`<button class="set-check go" aria-label="Start set ${i+1}" ${running?'disabled':''} onclick="startHold(${si},${i})">${icons.play}</button>`}</td>
     </tr>`).join('');
@@ -399,21 +439,23 @@ function renderHold(step,si,t){
 function renderInterval(step,si,t){
   const e=step.exs[0],running=t&&t.type==='interval'&&t.ctx.step===si,doneCount=e.sets.filter(x=>x.done).length;
   if(running){
-    const st=intervalState(t),side=st.round%2===1?(step.sideLabel==='hand'?'Right hand':'Right side'):(step.sideLabel==='hand'?'Left hand':'Left side');
+    const st=intervalState(t),odd=st.round%2===1,side=!step.sideLabel?'':step.sideLabel==='hand'?(odd?'Right hand':'Left hand'):(odd?'Right side':'Left side');
     return `<div class="big-wrap iv">
       <div class="iv-meta"><span class="eyebrow">Round</span><span class="num iv-round" id="iv-round">${st.round} / ${t.rounds}</span></div>
-      <div class="iv-side">${side}</div>
+      ${side?`<div class="iv-side">${side}</div>`:''}
       <div class="big-time num" id="big-time">${fmtClock(st.nextInMs)}</div>
       <div class="muted center">until next round · every ${t.every} s${t.pausedAt?' · paused':''}</div>
-      <div class="ticks">${Array.from({length:t.rounds},(_,i)=>`<span class="${i+1<st.round?'past':i+1===st.round?'now':''}">${i%2?'L':'R'}</span>`).join('')}</div>
-      <div class="row2"><button class="btn btn-outline" onclick="toggleTimerPause()">${t.pausedAt?'Resume':'Pause'}</button><button class="btn btn-ghost" onclick="stopIntervalEarly()">Stop + log</button></div>
+      <div class="ticks">${Array.from({length:t.rounds},(_,i)=>`<span class="${i+1<st.round?'past':i+1===st.round?'now':''}">${step.sideLabel?(i%2?'L':'R'):i+1}</span>`).join('')}</div>
+      <div class="row2"><button class="btn btn-outline" onclick="toggleTimerPause()">${t.pausedAt?'Resume':'Pause'}</button><button class="btn" onclick="logIntervalAll(${si})">Finished: log all ${t.rounds}</button></div>
+      <button class="skip-link" onclick="stopIntervalEarly()">Stop early: log the rounds done so far</button>
     </div>`;
   }
   if(step.status==='done')return `<div class="done-note">${doneCount} of ${e.sets.length} rounds logged at ${e.sets[0].weight} kg.</div>
     <button class="btn btn-outline" onclick="startInterval(${si})">Run it again</button>`;
-  return `<div class="ticks">${Array.from({length:step.rounds},(_,i)=>`<span>${i%2?'L':'R'}</span>`).join('')}</div>
-    <p class="muted">A beep starts each round, with 3-2-1 beeps before the next. Bell: <b class="num">${e.sets[0].weight} kg</b>.</p>
-    <button class="btn btn-big" onclick="startInterval(${si})">Start ${step.rounds} rounds</button>`;
+  return `${bellField(step)}<div class="ticks">${Array.from({length:step.rounds},(_,i)=>`<span>${step.sideLabel?(i%2?'L':'R'):i+1}</span>`).join('')}</div>
+    <p class="muted">A beep starts each round, with 3-2-1 beeps before the next.</p>
+    <button class="btn btn-big" onclick="startInterval(${si})">Start ${step.rounds} rounds</button>
+    <button class="btn btn-ghost" onclick="logIntervalAll(${si})">Did all ${step.rounds} without the timer</button>`;
 }
 
 function renderBlock(step,si,t){
@@ -427,7 +469,7 @@ function renderBlock(step,si,t){
       <div class="row2"><button class="btn btn-outline" onclick="toggleTimerPause()">${t.pausedAt?'Resume':'Pause'}</button><button class="btn" onclick="finishBlock(${si})">Done</button></div>
     </div>`;
   }
-  const vest=step.vest?`<label class="field vest-field"><span>Weighted vest <small class="muted">0 = none</small></span><span class="field-in"><input type="number" inputmode="decimal" min="0" data-sid="vest-${si}" value="${set.weight||0}" onchange="setVest(${si},this.value)"><span class="unit">lb</span></span></label>`:'';
+  const vest=step.vest?`<label class="field vest-field"><span>Weighted vest <small class="muted">0 = none</small></span><span class="field-in"><input type="number" inputmode="decimal" min="0" data-sid="vest-${si}" value="${set.weight||''}" placeholder="0" onfocus="this.select()" onchange="setVest(${si},this.value)"><span class="unit">lb</span></span></label>`:'';
   if(set.done)return `<div class="done-note">Logged ${set.reps} min${set.weight?' with a '+set.weight+' lb vest':''}.</div>`;
   return `${vest}${step.note&&!step.vest?`<p class="muted">${esc(step.note)}</p>`:''}
     <button class="btn btn-big" onclick="startBlock(${si})">Start ${step.targetMin} min</button>

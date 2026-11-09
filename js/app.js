@@ -1922,7 +1922,10 @@ async function initApp(){
   // Program settings (weights, calendar), alert toggles, backup reminders
   const prog=await dbGet('settings','program');
   const base=JSON.parse(JSON.stringify(DEFAULT_PROGRAM));
-  state.program=prog?{...base,...prog,W:{...base.W,...prog.W},acc:{...base.acc,...prog.acc},accReady:{...(prog.accReady||{})},equip:{...(prog.equip||{})}}:base;
+  state.program=prog?{...base,...prog,W:{...base.W,...prog.W},acc:{...base.acc,...prog.acc},accReady:{...(prog.accReady||{})},equip:{...(prog.equip||{})},
+    bw:{pullup:{...base.bw.pullup,...((prog.bw||{}).pullup||{})},dip:{...base.bw.dip,...((prog.bw||{}).dip||{})}}}:base;
+  // Nov 2026: pull-ups and dips got their own reps and weights (was one shared "pud" weight).
+  if(!prog||!prog.bw){const old=(state.program.acc||{}).pud||0;state.program.bw.pullup.add=old;state.program.bw.dip.add=old}
   // Nov 2026: the incline-walk vest became optional (off unless you set it on the walk).
   if(!state.program.vestOptional){state.program.vestLb=0;state.program.vestOptional=true;await dbPut('settings',JSON.parse(JSON.stringify(state.program)))}
   const alerts=await dbGet('settings','alerts');

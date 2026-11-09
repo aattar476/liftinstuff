@@ -162,7 +162,7 @@ async function confirmNextCycle(){
 function openProgramSettings(){state.subPage='program';render()}
 function renderProgramSettings(){
   const p=state.program,w=weekForDate(new Date(),p);
-  const num=(label,path,val,unit)=>`<label class="field"><span>${label}</span><span class="field-in"><input type="number" inputmode="decimal" data-sid="ps-${path}" value="${val||0}" onchange="setProgramField('${path}',this.value)"><span class="unit">${unit}</span></span></label>`;
+  const num=(label,path,val,unit)=>`<label class="field"><span>${label}</span><span class="field-in"><input type="number" inputmode="decimal" data-sid="ps-${path}" value="${val||''}" placeholder="0" onfocus="this.select()" onchange="setProgramField('${path}',this.value)"><span class="unit">${unit}</span></span></label>`;
   return `<div class="card"><h3>Calendar</h3>
       <label class="field"><span>Program start (a Monday)</span><span class="field-in"><input type="date" data-sid="ps-start" value="${p.startDate}" onchange="setProgramStart(this.value)"></span></label>
       ${num('Trip length','tripWeeks',p.tripWeeks,'weeks')}
@@ -173,6 +173,11 @@ function renderProgramSettings(){
       ${num('Squat','W.squat',p.W.squat,'lb')}${num('Bench','W.bench',p.W.bench,'lb')}${num('Deadlift','W.deadlift',p.W.deadlift,'lb')}${num('Overhead press','W.ohp',p.W.ohp,'lb')}
       ${num('Kettlebell','kbKg',p.kbKg,'kg')}${num('Vest','vestLb',p.vestLb,'lb')}
     </div>
+    <div class="card"><h3>Pull-ups + dips</h3>
+      <p class="muted mb-8">Reps per set go up 1 each time you hit them on every set (pull-ups to 8, dips to 12), then +5 lb and back to 5 / 8.</p>
+      ${num('Pull-up reps','bw.pullup.reps',p.bw.pullup.reps,'reps')}${num('Pull-up added weight','bw.pullup.add',p.bw.pullup.add,'lb')}
+      ${num('Dip reps','bw.dip.reps',p.bw.dip.reps,'reps')}${num('Dip added weight','bw.dip.add',p.bw.dip.add,'lb')}
+    </div>
     <div class="card"><h3>Accessory weights</h3>
       ${Object.entries(ACCESSORIES).map(([k,l])=>num(l+(p.accReady[k]?' <span class="badge">ready +5</span>':''),'acc.'+k,p.acc[k],'lb')).join('')}
     </div>
@@ -180,8 +185,9 @@ function renderProgramSettings(){
     ${(p.cycleHistory||[]).length?`<div class="card"><h3>Past cycles</h3>${p.cycleHistory.slice().reverse().map(c=>`<div class="kv"><span>Cycle ${c.cycle}</span><span class="num">S ${c.W.squat} · B ${c.W.bench} · D ${c.W.deadlift} · O ${c.W.ohp} · ${c.kbKg} kg</span></div>`).join('')}</div>`:''}`;
 }
 async function setProgramField(path,v){
-  const [a,b]=path.split('.'),n=parseFloat(v)||0;
-  if(b)state.program[a][b]=n;else state.program[a]=a==='tripWeeks'?Math.max(1,Math.round(n)):n;
+  const keys=path.split('.'),n=parseFloat(v)||0,last=keys.pop();
+  let o=state.program;for(const k of keys)o=o[k]=o[k]||{};
+  o[last]=path==='tripWeeks'?Math.max(1,Math.round(n)):n;
   await saveProgram();
 }
 async function setProgramStart(v){if(!v)return;state.program.startDate=v;await saveProgram();render()}
