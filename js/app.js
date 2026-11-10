@@ -246,7 +246,7 @@ let state={
   tab:'today',
   // program settings (see js/program.js DEFAULT_PROGRAM)
   program:JSON.parse(JSON.stringify(DEFAULT_PROGRAM)),homeWeekIdx:null,
-  lastExport:null,pendingBackup:null,backups:[],storagePersisted:false,macUrl:'',macSync:null,
+  lastExport:null,pendingBackup:null,backups:[],storagePersisted:false,macUrl:'',macKey:'',macSync:null,
   subPage:null,
   // workout session
   session:null, // {id,name,startTime,exercises:[{exerciseId,name,body,equip,sets:[{weight,reps,done}]}],currentExIdx:0}
@@ -952,6 +952,7 @@ function renderWorkoutDetail(){
       return `<div class="card ex-card">
         <div class="card-h"><h3>${esc(ex.name)}</h3>${ex.skipped?'<span class="tag muted">skipped</span>':''}</div>
         ${ex.note?`<p class="ex-note">${esc(ex.note)}</p>`:''}
+        ${ex.timeSec?`<p class="muted">Took ${fmtSecs(ex.timeSec)}</p>`:''}
         <table class="sets"><tbody>${sets.map((s,i)=>{
           const pr=s.pr||(oldPR!=null&&s.done&&s.weight>0&&s.weight>=oldPR);
           return `<tr class="${s.done?'':'muted'}"><td class="sn num">${i+1}</td><td class="rx">${fmtSet(ex,s)}${pr?'<span class="badge">best</span>':''}</td></tr>`;
@@ -1711,17 +1712,18 @@ async function exportData(){
 // After every change the full export goes to the receiver on the Mac mini
 // (tools/lift_receiver.py), which keeps dated copies and a SQLite/CSV dataset.
 // If the Mac can't be reached (Tailscale off, no signal) it's marked pending
-// and retried when the app opens or comes back to the screen.
+// and retried when the app opens or comes back to the screen. Every request
+// carries the pairing key; the receiver refuses anything without it.
 let macSyncTimer=null,macSyncBusy=false;
-function queueMacSync(){if(!state.macUrl)return;clearTimeout(macSyncTimer);macSyncTimer=setTimeout(()=>syncToMac(false),1500)}
+function queueMacSync(){if(!state.macUrl||!state.macKey)return;clearTimeout(macSyncTimer);macSyncTimer=setTimeout(()=>syncToMac(false),1500)}
 async function saveMacSync(){await dbPut('settings',{key:'macSync',value:state.macSync})}
 async function syncToMac(manual){
-  if(!state.macUrl||macSyncBusy)return;
+  if(!state.macUrl||!state.macKey||macSyncBusy)return;
   macSyncBusy=true;
   state.macSync={...(state.macSync||{}),pending:true};await saveMacSync();
   try{
     const exp=await exportAllData(),ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),20000);
-    const r=await fetch(state.macUrl.replace(/\/+$/,'')+'/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(exp),signal:ctl.signal});
+    const r=await fetch(state.macUrl.replace(/\/+$/,'')+'/ingest',{method:'POST',headers:{'Content-Type':'application/json','X-Lift-Key':state.macKey},body:JSON.stringify(exp),signal:ctl.signal});
     clearTimeout(to);
     const j=await r.json().catch(()=>({}));
     if(r.ok){
@@ -1731,7 +1733,8 @@ async function syncToMac(manual){
       if(manual)toast('Sent to Mac: '+j.workouts+' workouts');
     }else{
       // 409 = the Mac kept its bigger dataset; the upload was still saved there.
-      state.macSync={...state.macSync,ok:false,error:j.error||('Mac replied '+r.status),pending:r.status!==409&&r.status!==400};
+      // 401 = wrong pairing key; retrying won't help until it's fixed.
+      state.macSync={...state.macSync,ok:false,error:r.status===401?'The Mac didn\'t accept the pairing key. Check it under More.':j.error||('Mac replied '+r.status),pending:![400,401,409].includes(r.status)};
       if(manual)toast(state.macSync.error);
     }
   }catch(e){
@@ -1746,6 +1749,10 @@ async function setMacUrl(v){
   if(v&&!/^https?:\/\//.test(v))v='https://'+v;
   state.macUrl=v;await dbPut('settings',{key:'macUrl',value:v});
   render();if(v)syncToMac(true);
+}
+async function setMacKey(v){
+  state.macKey=(v||'').replace(/\s+/g,'');await dbPut('settings',{key:'macKey',value:state.macKey});
+  render();if(state.macKey)syncToMac(true);
 }
 
 // ============================================================
@@ -1977,8 +1984,8 @@ async function initApp(){
   if(alerts)Object.assign(alertPrefs,alerts.value);
   const lastExport=await dbGet('settings','lastExport');
   state.lastExport=lastExport?lastExport.value:null;
-  const macUrl=await dbGet('settings','macUrl'),macSync=await dbGet('settings','macSync');
-  state.macUrl=macUrl?macUrl.value:'';state.macSync=macSync?macSync.value:null;
+  const macUrl=await dbGet('settings','macUrl'),macSync=await dbGet('settings','macSync'),macKey=await dbGet('settings','macKey');
+  state.macUrl=macUrl?macUrl.value:'';state.macKey=macKey?macKey.value:'';state.macSync=macSync?macSync.value:null;
   state.backups=(await dbGetAll('backups')).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
   state.pendingBackup=state.backups.find(b=>!b.acknowledged&&b.fromVersion<3)||null;
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Starts tools/lift_receiver.py at login and keeps it running.
-     Install: copy to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>` -->
+     Installed by tools/setup_mac_receiver.sh (safe to re-run) -->
 <plist version="1.0">
 <dict>
     <key>Label</key>

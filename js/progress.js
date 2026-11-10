@@ -160,7 +160,9 @@ function renderMore(){
         <h3>Send to Mac</h3>
         <p class="muted mb-8">After every workout the app sends everything to your Mac mini over Tailscale, which builds a dataset you can query (SQLite + CSV).</p>
         <label class="field"><span>Mac address</span><span class="field-in"><input type="url" inputmode="url" autocapitalize="off" spellcheck="false" style="width:190px;text-align:left" data-sid="mac-url" value="${esc(state.macUrl)}" placeholder="https://….ts.net:8443" onchange="setMacUrl(this.value)"></span></label>
-        ${state.macUrl?`<p class="mac-status ${state.macSync&&state.macSync.ok?'ok':state.macSync&&state.macSync.error?'bad':''}">${
+        <label class="field"><span>Pairing key</span><span class="field-in"><input type="password" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:190px;text-align:left" data-sid="mac-key" value="${esc(state.macKey)}" placeholder="paste from the Mac" onchange="setMacKey(this.value)"></span></label>
+        ${state.macUrl&&!state.macKey?'<p class="mac-status bad">Paste the pairing key to start sending.</p>':''}
+        ${state.macUrl&&state.macKey?`<p class="mac-status ${state.macSync&&state.macSync.ok?'ok':state.macSync&&state.macSync.error?'bad':''}">${
           !state.macSync?'Not sent yet.':state.macSync.ok?'Last sent '+fmtDate(state.macSync.at)+' · '+state.macSync.workouts+' workouts on the Mac':esc(state.macSync.error||'')+(state.macSync.pending?' Will retry.':'')}</p>
         <button class="btn btn-outline" onclick="syncToMac(true)">Send now</button>`:''}
       </div>

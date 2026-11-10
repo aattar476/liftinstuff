@@ -23,6 +23,60 @@ function lastWeightFor(libId,unit){
   }
   return best;
 }
+// Most recent logged workout for an exercise, preferring the same kind of
+// step (so light-day get-ups compare with light-day get-ups).
+function lastLogFor(libId,kind){
+  let best=null,any=null;
+  for(const w of state.workouts){
+    const e=(w.exercises||[]).find(e=>e.exerciseId===libId&&!e.skipped&&((e.sets||[]).some(x=>x.done)||e.timeSec));
+    if(!e)continue;
+    if(!any||w.startTime>any.w.startTime)any={w,e};
+    if(e.kind===kind&&(!best||w.startTime>best.w.startTime))best={w,e};
+  }
+  return best||any;
+}
+const fmtSecs=sec=>Math.floor(sec/60)+':'+String(Math.round(sec%60)).padStart(2,'0');
+// "3×5 @ 185 lb" when every set is the same, else "5 @ 185, 4 @ 185 lb".
+function summarizeSets(e){
+  const sets=(e.sets||[]).filter(x=>x.done),u=e.wUnit||(e.unit==='kg'?'kg':'lb');
+  if(!sets.length)return '';
+  if(e.unit==='min')return (e.durationMin||sets[0].reps||0)+' min'+(sets[0].weight?', vest '+sets[0].weight+' lb':'');
+  const one=x=>e.unit==='s'?(x.weight?x.weight+' '+u+' · ':'')+x.secs+' s':(x.reps||0)+(x.weight?' @ '+x.weight:'');
+  const same=sets.every(x=>x.weight===sets[0].weight&&x.reps===sets[0].reps&&x.secs===sets[0].secs);
+  if(same)return e.unit==='s'?sets.length+'×'+one(sets[0]):sets.length+'×'+(sets[0].reps||0)+(e.perSide?'/side':'')+(sets[0].weight?' @ '+sets[0].weight+' '+u+(e.perHand?' each':''):'');
+  return sets.map(one).join(', ')+(e.unit!=='s'&&sets.some(x=>x.weight)?' '+u+(e.perHand?' each':''):'');
+}
+function renderLastTime(step){
+  if(step.kind==='block'&&!step.vest)return '';
+  const lines=step.exs.map(e=>{
+    const l=lastLogFor(e.exerciseId,step.kind);if(!l)return '';
+    const parts=[summarizeSets(l.e),l.e.timeSec?'took '+fmtSecs(l.e.timeSec):''].filter(Boolean);
+    return parts.length?`<div>${step.exs.length>1?esc(e.name)+': ':''}${esc(parts.join(' · '))}</div>`:'';
+  }).filter(Boolean);
+  if(!lines.length)return '';
+  const l=lastLogFor(step.exs[0].exerciseId,step.kind)||lastLogFor(step.exs[1].exerciseId,step.kind);
+  return `<div class="last-time"><span class="eyebrow">Last time · ${esc(shortDate(l.w.startTime))}</span>${lines.join('')}</div>`;
+}
+
+// Optional stopwatch for untimed steps (e.g. 10 get-ups) so times can be
+// compared week to week. Lives on the step, separate from the rest timer.
+function swElapsed(sw){return sw?(sw.accMs||0)+(sw.startAt?Date.now()-sw.startAt:0):0}
+function swToggle(si){
+  unlockAudio();unskip(si);
+  const st=state.session.steps[si],sw=st.sw||(st.sw={accMs:0,startAt:null});
+  if(sw.startAt){sw.accMs+=Date.now()-sw.startAt;sw.startAt=null}else sw.startAt=Date.now();
+  saveSession();render();
+}
+function swStop(st){const sw=st.sw;if(sw&&sw.startAt){sw.accMs+=Date.now()-sw.startAt;sw.startAt=null}}
+function swReset(si){state.session.steps[si].sw=null;saveSession();render()}
+function renderStopwatch(step,si){
+  if(!step.timeIt)return '';
+  const sw=step.sw,ms=swElapsed(sw),on=!!(sw&&sw.startAt);
+  return `<div class="sw-row ${on?'on':''}"><span class="num sw-time" id="sw-time">${fmtSecs(ms/1000)}</span>
+    <button class="btn btn-sm ${on?'btn-outline':''}" onclick="swToggle(${si})">${on?'Pause':ms?'Resume':'Start stopwatch'}</button>
+    ${ms&&!on?`<button class="btn btn-sm btn-ghost" onclick="swReset(${si})">Reset</button>`:''}</div>`;
+}
+
 function buildSessionFor(id,w){return buildSession(id,w,state.program,{lastWeight:lastWeightFor})}
 
 function startProgramSession(id,weekIdx){
@@ -54,6 +108,8 @@ function runnerTick(){
   if(!s||s.kind!=='program'){clearInterval(runTick);runTick=null;return}
   const el=document.getElementById('run-elapsed');
   if(el)el.textContent=fmtUp(Date.now()-new Date(s.startTime));
+  const sw=document.getElementById('sw-time'),cs=s.steps[s.stepIdx];
+  if(sw&&cs&&cs.sw&&cs.sw.startAt)sw.textContent=fmtSecs(swElapsed(cs.sw)/1000);
   if(!t)return;
   const ev=timerEvents(t);
   if(ev.length){playEvents(ev);saveSession()}
@@ -149,6 +205,7 @@ function afterSetLogged(si){
 function completeStep(si){
   const s=state.session,step=s.steps[si];
   step.status='done';
+  swStop(step);
   if(step.acc&&hitTopOfRange(step,step.exs[0].sets)&&!state.program.accReady[step.acc]){
     state.program.accReady[step.acc]=true;saveProgram();
     s.suggest.push({acc:step.acc,text:step.title+': every set hit '+step.topReps+' reps. Add 5 lb and drop back to the bottom of the range.'});
@@ -326,6 +383,7 @@ function sessionToWorkout(s,lenMin){
     exercises.push({exerciseId:e.exerciseId,name:e.name,body:e.body,equip:e.equip,isCardio:!!e.isCardio,
       unit:e.unit,wUnit:e.wUnit,perSide:!!e.perSide,perHand:!!e.perHand,key:e.key,kind:step.kind,skipped:step.status==='skipped',
       note:ei===0&&step.userNote?step.userNote:undefined,
+      timeSec:ei===0&&swElapsed(step.sw)>=1000?Math.round(swElapsed(step.sw)/1000):undefined,
       durationMin:e.unit==='min'?(e.sets[0].done?e.sets[0].reps:0):undefined,
       sets:e.sets.map(x=>({weight:x.weight||0,reps:x.reps||0,secs:x.secs,done:!!x.done,pr:!!x.pr}))});
   });
@@ -392,7 +450,9 @@ function renderRunner(){
       <h2 class="run-title">${esc(step.title)}</h2>
       <div class="run-rx num">${esc(step.rx)}${step.rest?` · rest ${step.rest} s`:''}</div>
       ${cue?`<button class="cue-btn" onclick="toggleCue()" aria-expanded="${!!state._showCue}">${state._showCue?'Hide cue':'Cue'}</button>${state._showCue?`<p class="cue">${esc(cue)}</p>`:''}`:''}
+      ${renderLastTime(step)}
       ${eq}
+      ${renderStopwatch(step,si)}
       ${ramp}
       ${body}
       ${step.status==='todo'&&!(t&&t.ctx&&t.ctx.step===si)?`<button class="skip-link" onclick="skipStep()">Skip this exercise</button>`:''}

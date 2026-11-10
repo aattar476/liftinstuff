@@ -157,6 +157,7 @@ const PX={
   swing1:{name:'One-arm swing',libId:'h11',body:'Hamstrings',equip:'Kettlebell',cue:'Hike the bell back, snap the hips, float it to chest height.'},
   tgu:{name:'Turkish get-up',libId:'co20',body:'Core',equip:'Kettlebell',cue:'Eyes on the bell, arm locked, slow and deliberate both ways.'},
   swing2:{name:'Two-hand swing',libId:'h11',body:'Hamstrings',equip:'Kettlebell',cue:'Easy and crisp; hips do the work, arms are ropes.'},
+  twist:{name:'Russian twist',libId:'co14',body:'Core',equip:'Bodyweight',cue:'Sit tall and lean back a little; turn your ribs side to side, not just your arms. Feet up makes it harder. Holding a weight is optional.'},
   deadbug:{name:'Dead bug',libId:'co18',body:'Core',equip:'Bodyweight',cue:'Low back pressed to the floor; reach opposite arm and leg slowly, exhale as you reach.'},
   sideplank:{name:'Side plank',libId:'co10',body:'Core',equip:'Bodyweight',cue:'Straight line ankle to ear, hips high. Alternate sides each set.'},
   hollow:{name:'Hollow hold',libId:'ssb_hollow',body:'Core',equip:'Bodyweight',cue:'Low back glued down, arms and legs long and just off the floor. Bend the knees to make it easier.'},
@@ -298,14 +299,15 @@ function inclWalkStep(mins,deload,cfg){
   st.vest=!deload;st.exs[0].sets[0].weight=vest;
   return st;
 }
-// ~6 min core circuit for skiing: resist arching (dead bug, hollow) and
-// twisting/side-bending (side plank). Holds get 5 s longer each build week.
-function absSteps(w,rounds){
+// ~6 min core circuit for skiing: rotation (Russian twist), side-bending
+// (side plank) and resisting arching (hollow). Holds get 5 s longer each
+// build week. Twists reuse last time's held weight (0 = bodyweight).
+function absSteps(w,rounds,opts){
   const add=w.kind==='build'?5*w.i:0,sp=30+add,ho=25+add;
   const holds=(n,sec)=>Array.from({length:n},()=>({weight:0,secs:sec}));
   return [
-    {kind:'weights',title:PX.deadbug.name,rest:20,rx:rounds+'×8/side',
-      exs:[ex('deadbug',{unit:'lb',perSide:true,sets:weightSets(rounds,0,8)})]},
+    {kind:'weights',title:PX.twist.name,rest:20,rx:rounds+'×10/side',addWeight:true,timeIt:true,
+      exs:[ex('twist',{unit:'lb',perSide:true,sets:weightSets(rounds,(opts&&opts.lastWeight&&opts.lastWeight(PX.twist.libId,'lb'))||0,10)})]},
     {kind:'hold',mode:'countdown',title:PX.sideplank.name,rest:15,rx:rounds+'×'+sp+' s each side (alternate)',
       exs:[ex('sideplank',{unit:'s',sets:holds(rounds*2,sp)})]},
     {kind:'hold',mode:'countdown',title:PX.hollow.name,rest:20,rx:rounds+'×'+ho+' s',
@@ -388,17 +390,17 @@ function buildSession(id,w,cfg,opts){
   }else if(id==='lightKB'){
     const kg=cfg.kbKg||0;
     steps.push(blockStep('kbwarm',3));
-    steps.push({kind:'weights',title:'Turkish get-up',rest:0,rx:'10 singles, no clock · '+kg+' kg',kb:true,
+    steps.push({kind:'weights',title:'Turkish get-up',rest:0,rx:'10 singles, no clock · '+kg+' kg',kb:true,timeIt:true,
       exs:[ex('tgu',{unit:'kg',sets:weightSets(1,kg,10)})]});
     const one=((cfg.equip||{}).swingLight||'2h')==='1h';
-    steps.push({kind:'weights',title:one?'One-arm swing':'Two-hand swing',rest:0,rx:'5×10 easy'+(one?', alternate hands':'')+' · '+kg+' kg',
+    steps.push({kind:'weights',title:one?'One-arm swing':'Two-hand swing',rest:0,timeIt:true,rx:'5×10 easy'+(one?', alternate hands':'')+' · '+kg+' kg',
       swap:'swingLight',equipOpts:['1h','2h'],equipCur:one?'1h':'2h',kb:true,
       exs:[ex(one?'swing1':'swing2',{unit:'kg',sets:weightSets(5,kg,10)})]});
-    steps.push(...absSteps(w,2));
+    steps.push(...absSteps(w,2,opts));
     steps.push(blockStep('stretch',4));
   }else if(id==='hike')steps.push(blockStep('hike',90,'60–120 min with pack'));
   else if(id==='easyHike')steps.push(blockStep('hike',60,'light pack'));
-  else if(id==='absStretch'){steps.push(blockStep('mobility',3));steps.push(...absSteps(w,3));steps.push(blockStep('stretch',6))}
+  else if(id==='absStretch'){steps.push(blockStep('mobility',3));steps.push(...absSteps(w,3,opts));steps.push(blockStep('stretch',6))}
   else if(id==='walk')steps.push(blockStep('walk',30));
   else if(id==='tripDay'){steps.push(blockStep('mobility',20));steps.push(blockStep('walk',30))}
   return {...meta,id,week:w,steps,estMin:estimateMinutes(steps,w)};
@@ -414,7 +416,7 @@ function estimateMinutes(steps,w){
     if(s.kind==='interval')t=s.every*s.rounds+(s.restAfter||0);
     else if(s.kind==='hold')t=n*(s.exs[0].sets[0].secs||60)*(s.exs[0].perSide?2:1)+(n-1)*r;
     else{
-      const reps=s.exs[0].sets[0].reps||5,perRep=s.exs[0].key==='tgu'?50:s.main?5:s.superset?4.5:4;
+      const reps=s.exs[0].sets[0].reps||5,perRep=s.exs[0].key==='tgu'?50:s.exs[0].key==='twist'?2:s.main?5:s.superset?4.5:4;
       t=n*reps*perRep*(s.exs[0].perSide?2:1)*s.exs.length+(n-1)*r+(s.main?300:0);
     }
     lift+=t;liftCount++;

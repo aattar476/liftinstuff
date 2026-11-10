@@ -69,6 +69,7 @@ def rows(export):
                     "per_side": int(per_side), "per_hand": int(per_hand),
                     "new_best": int(bool(s.get("pr"))), "skipped": int(bool(ex.get("skipped"))),
                     "exercise_note": ex.get("note") if n == 1 else None,
+                    "exercise_time_sec": ex.get("timeSec") if n == 1 else None,
                 })
         workouts.append({
             "id": w.get("id"), "name": w.get("name"), "date": day, "start_time": start,
@@ -90,7 +91,7 @@ CREATE TABLE workouts(id TEXT PRIMARY KEY, name TEXT, date TEXT, start_time TEXT
 CREATE TABLE sets(workout_id TEXT REFERENCES workouts(id), date TEXT, exercise_order INTEGER,
   exercise_id TEXT, exercise TEXT, equipment TEXT, set_no INTEGER, done INTEGER,
   weight REAL, weight_unit TEXT, weight_lb REAL, reps INTEGER, seconds INTEGER, minutes REAL, calories REAL,
-  per_side INTEGER, per_hand INTEGER, new_best INTEGER, skipped INTEGER, exercise_note TEXT);
+  per_side INTEGER, per_hand INTEGER, new_best INTEGER, skipped INTEGER, exercise_note TEXT, exercise_time_sec INTEGER);
 CREATE TABLE bodyweight(date TEXT PRIMARY KEY, weight_lb REAL);
 CREATE INDEX sets_by_exercise ON sets(exercise_id, date);
 -- Heaviest completed set per exercise per workout (lifts only, not timed work).

@@ -4,12 +4,16 @@ workout (over Tailscale), and this keeps a dated copy and rebuilds the
 SQLite/CSV dataset (see lift_dataset.py).
 
 Listens on 127.0.0.1:8096 only; `tailscale serve --bg --https=8443 8096`
-makes it reachable from your own devices, nowhere else.
+makes it reachable from your own devices, nowhere else. On top of that,
+every request must carry the pairing key (X-Lift-Key header), which is
+created on first start in .pairing-key and only shown by --show-key.
 
-  GET  /health   -> {"ok": true, "workouts": n, "last": "..."}
-  POST /ingest   -> body = the app's export JSON
+  GET  /health   -> {"ok": true} (+ counts when the key is sent)
+  POST /ingest   -> body = the app's export JSON (key required)
+
+  python3 lift_receiver.py --show-key   prints the key to paste into the app
 """
-import datetime as dt, json, os, sys, threading
+import datetime as dt, hmac, json, os, secrets, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import lift_dataset
@@ -20,12 +24,23 @@ DB = os.path.join(HERE, "liftinstuff.sqlite")
 PORT = int(os.environ.get("LIFT_PORT", "8096"))
 MAX_BODY = 25 * 1024 * 1024
 KEEP_RAW = 200
+KEY_FILE = os.path.join(HERE, ".pairing-key")
 ALLOWED_ORIGINS = {"https://aattar476.github.io", "http://127.0.0.1:8095", "http://localhost:8095"}
 lock = threading.Lock()
 
 
 def log(msg):
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)
+
+
+def pairing_key():
+    """Reads the key, creating it (owner-only file) the first time."""
+    if not os.path.exists(KEY_FILE):
+        fd = os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(secrets.token_urlsafe(24))
+    with open(KEY_FILE) as f:
+        return f.read().strip()
 
 
 def last_raw():
@@ -40,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Lift-Key")
             # Chrome asks before a public page talks to a private-network address.
             self.send_header("Access-Control-Allow-Private-Network", "true")
 
@@ -53,6 +68,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def authorized(self):
+        return hmac.compare_digest((self.headers.get("X-Lift-Key") or "").encode(), KEY.encode())
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.cors()
@@ -60,13 +78,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
+            if not self.authorized():
+                return self.reply(200, {"ok": True})
             return self.reply(200, {"ok": True, "workouts": lift_dataset.count_workouts(DB), "last": last_raw()})
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
         if self.path.rstrip("/") != "/ingest":
             return self.reply(404, {"error": "not found"})
-        n = int(self.headers.get("Content-Length") or 0)
+        if not self.authorized():
+            log("Refused an upload without the right pairing key")
+            return self.reply(401, {"error": "wrong or missing pairing key"})
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
         if not 0 < n <= MAX_BODY:
             return self.reply(413, {"error": "empty or too large"})
         try:
@@ -96,7 +122,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+os.umask(0o077)  # dataset, raw copies and key: readable by you only
+KEY = pairing_key()
+
 if __name__ == "__main__":
+    if "--show-key" in sys.argv:
+        print(KEY)
+        sys.exit(0)
     os.makedirs(RAW, exist_ok=True)
     log(f"Listening on 127.0.0.1:{PORT}")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

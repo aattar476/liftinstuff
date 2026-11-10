@@ -103,6 +103,8 @@ function dbClear(store){return new Promise((res,rej)=>{const tx=db.transaction(s
 const EXPORT_STORES=['exercises','templates','workouts','bodyweight','settings','goals','templatesArchive','activeSession'];
 async function exportAllData(){
   const data=await readAllStores(db,EXPORT_STORES);
+  // The Mac pairing key stays on this phone: never in export files or uploads.
+  if(Array.isArray(data.settings))data.settings=data.settings.filter(r=>r.key!=='macKey');
   return {app:'LiftinStuff',schema:DB_VER,exportedAt:new Date().toISOString(),data};
 }
 

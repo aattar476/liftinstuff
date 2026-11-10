@@ -85,14 +85,14 @@ assert.ok(ss.estMin.total<=30,'S&S morning under 30 min: '+ss.estMin.total);
 assert.equal(ss.steps[1].restAfter,60);
 const light=P.buildSession('lightKB',W('2026-10-26'),cfg);
 assert.equal(setsReps(light.steps[1]),'1×10');assert.equal(setsReps(light.steps[2]),'5×10');
-assert.deepEqual(light.steps.map(s=>s.exs[0].key),['kbwarm','tgu','swing2','deadbug','sideplank','hollow','stretch']);
+assert.deepEqual(light.steps.map(s=>s.exs[0].key),['kbwarm','tgu','swing2','twist','sideplank','hollow','stretch']);
 assert.ok(light.estMin.total<=30,'light KB morning under 30 min: '+light.estMin.total);
 assert.ok(!light.steps.some(s=>s.exs[0].key==='walk'),'no walk on KB mornings');
 // Abs: holds +5 s per build week; Sunday has 3 rounds.
 const sideHold=d=>P.buildSession('lightKB',W(d),cfg).steps.find(s=>s.exs[0].key==='sideplank').exs[0].sets[0].secs;
 assert.deepEqual(['2026-10-26','2026-11-02','2026-11-16','2026-11-23'].map(sideHold),[30,35,45,30]);
 const sun=P.buildSession('absStretch',W('2026-10-26'),cfg);
-assert.equal(sun.steps.find(s=>s.exs[0].key==='deadbug').exs[0].sets.length,3);
+assert.equal(sun.steps.find(s=>s.exs[0].key==='twist').exs[0].sets.length,3);
 assert.ok(sun.estMin.total<=25,'Sunday abs + stretch ~20 min: '+sun.estMin.total);
 
 // Weekly layout.
