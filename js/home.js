@@ -3,7 +3,7 @@
 // + session preview, program settings, next cycle, repeat week
 // ============================================================
 
-async function saveProgram(){await dbPut('settings',JSON.parse(JSON.stringify(state.program)));backupToFirebase()}
+async function saveProgram(){await dbPut('settings',JSON.parse(JSON.stringify(state.program)));queueMacSync()}
 
 const DOW=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const weekColor=w=>w.kind==='deload'?'var(--walk)':w.kind==='trip'?'var(--hike)':'var(--lower)';

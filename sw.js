@@ -1,12 +1,12 @@
 // Bump CACHE_NAME on every release so phones drop the old files.
-const CACHE_NAME = 'liftinstuff-v3';
+const CACHE_NAME = 'liftinstuff-v4';
 const ASSETS = [
   './', './index.html', './manifest.json', './css/styles.css',
-  './js/firebase-config.js', './js/program.js', './js/timers.js', './js/db.js',
+  './js/program.js', './js/timers.js', './js/db.js',
   './js/app.js', './js/runner.js', './js/home.js', './js/progress.js', './js/main.js',
 ];
-// Third-party files that never change for a given URL: fonts and the Firebase SDK.
-const RUNTIME_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'www.gstatic.com'];
+// Third-party files that never change for a given URL: fonts.
+const RUNTIME_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
@@ -41,5 +41,5 @@ self.addEventListener('fetch', e => {
       }))
     );
   }
-  // Everything else (Firebase database traffic) goes straight to the network.
+  // Everything else (the upload to the Mac) goes straight to the network.
 });

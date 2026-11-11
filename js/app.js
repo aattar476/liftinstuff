@@ -2,24 +2,6 @@
 // USER MANAGEMENT
 // ============================================================
 // Single-user app (Drew). The per-user DB name is kept so existing data stays put.
-const currentUser='Drew';
-
-// ============================================================
-// FIREBASE CONFIG
-// ============================================================
-let fbDb=null;
-// Never touch the real cloud backup from a local dev/test copy of the app.
-const IS_LOCAL_DEV=/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-function initFirebase(){
-  if(IS_LOCAL_DEV){console.info('[Firebase] Disabled on localhost');return}
-  try{
-    if(firebaseConfig.apiKey&&!firebaseConfig.apiKey.startsWith('REPLACE')){
-      firebase.initializeApp(firebaseConfig);
-      fbDb=firebase.database();
-    }
-  }catch(e){console.warn('Firebase not configured:',e)}
-}
-
 // ============================================================
 // EXERCISE LIBRARY
 // ============================================================
@@ -800,7 +782,7 @@ async function saveGoal(){
 
   state.goals.push(goal);
   await dbPut('goals',goal);
-  backupToFirebase();
+  queueMacSync();
   setState({showSetGoal:false,_goalTimeframe:null,_goalType:null});
 }
 
@@ -809,7 +791,7 @@ async function deleteGoal(id){
   if(idx>-1){
     await dbDelete('goals',id);
     state.goals.splice(idx,1);
-    backupToFirebase();
+    queueMacSync();
     render();
   }
 }
@@ -1020,7 +1002,7 @@ async function savePastWorkout(){
   const idx=state.workouts.findIndex(wk=>wk.id===w.id);
   if(idx>=0)state.workouts[idx]=w;
   await dbPut('workouts',w);
-  backupToFirebase();
+  queueMacSync();
   state._viewWorkoutId=w.id;
   state.subPage='workout-detail';
   state._editWorkout=null;
@@ -1391,7 +1373,7 @@ async function _logIntervalWorkout(it){
     };
     state.workouts.push(workout);
     await dbPut('workouts',workout);
-    backupToFirebase();
+    queueMacSync();
     render();
   }catch(e){console.warn('[Interval] could not save to history',e)}
 }
@@ -1645,7 +1627,7 @@ async function finishWorkout(){
   const workout={...state.session};
   state.workouts.push(workout);
   await dbPut('workouts',workout);
-  backupToFirebase();
+  queueMacSync();
 
   state.session=null;state.subPage=null;
   dbDelete('activeSession','current').catch(()=>{});
@@ -1658,7 +1640,7 @@ async function finishWorkoutAuto(){
   const workout={...state.session};
   state.workouts.push(workout);
   await dbPut('workouts',workout);
-  backupToFirebase();
+  queueMacSync();
   state.session=null;state.subPage=null;
   clearInterval(state.timerInterval);
   state.timerRunning=false;state.timerStartedAt=null;state.timerPausedAccumulated=0;state.timerTargetSeconds=0;
@@ -1679,7 +1661,7 @@ async function deleteWorkout(wid){
   if(!confirm('Delete this workout? This cannot be undone.'))return;
   state.workouts=state.workouts.filter(w=>w.id!==wid);
   await dbDelete('workouts',wid);
-  backupToFirebase();
+  queueMacSync();
   state.subPage=null;
   render();
 }
@@ -1694,7 +1676,7 @@ async function logBW(sid){
   state.bodyweights=state.bodyweights.filter(b=>b.date!==entry.date);
   state.bodyweights.push(entry);
   await dbPut('bodyweight',entry);
-  backupToFirebase();
+  queueMacSync();
   render();
 }
 
@@ -1864,82 +1846,6 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 // ============================================================
-// FIREBASE DATA BACKUP & RESTORE
-// ============================================================
-// Backs up all user data to Firebase so it survives cache clears,
-// device switches, or code updates. Restore runs on init if local is empty.
-
-function backupToFirebase(){
-  queueMacSync();
-  if(!fbDb||!currentUser)return;
-  const ref=fbDb.ref('users/'+currentUser);
-  const data={
-    workouts:{},templates:{},templatesArchive:{},bodyweights:{},goals:{},
-    settings:{defaultRestTime:state.defaultRestTime,program:state.program,alerts:{...alertPrefs}},
-    lastBackup:Date.now()
-  };
-  for(const w of state.workouts)data.workouts[w.id]=w;
-  for(const t of state.templates)data.templates[t.id]=t;
-  for(const t of state.templatesArchive)data.templatesArchive[t.id]=t;
-  for(const b of state.bodyweights)data.bodyweights[b.date]=b;
-  for(const g of state.goals)data.goals[g.id]=g;
-  // Firebase refuses any `undefined` value and throws straight away, which used
-  // to stop whatever called this (e.g. Save session). The JSON round trip drops
-  // undefined fields, and a failed backup is only ever logged.
-  try{
-    ref.set(JSON.parse(JSON.stringify(data))).then(()=>console.log('[Backup] Synced to Firebase')).catch(e=>console.warn('[Backup] Failed:',e));
-  }catch(e){console.warn('[Backup] Failed:',e)}
-}
-
-async function restoreFromFirebase(){
-  if(!fbDb||!currentUser)return false;
-  try{
-    const snapshot=await fbDb.ref('users/'+currentUser).once('value');
-    const data=snapshot.val();
-    if(!data)return false;
-
-    let restored=false;
-
-    if(data.workouts&&state.workouts.length===0){
-      const workouts=Object.values(data.workouts);
-      for(const w of workouts){state.workouts.push(w);await dbPut('workouts',w)}
-      if(workouts.length>0)restored=true;
-      console.log('[Restore] '+workouts.length+' workouts from Firebase');
-    }
-    // Program templates are built in, so cloud templates only ever go to the archive.
-    if(data.templatesArchive||data.templates){
-      const archived=Object.values(data.templatesArchive||data.templates);
-      for(const t of archived)await dbPut('templatesArchive',t);
-    }
-    if(data.bodyweights&&state.bodyweights.length===0){
-      const bws=Object.values(data.bodyweights);
-      for(const b of bws){state.bodyweights.push(b);await dbPut('bodyweight',b)}
-      if(bws.length>0)restored=true;
-      console.log('[Restore] '+bws.length+' bodyweight entries from Firebase');
-    }
-    if(data.goals&&state.goals.length===0){
-      const goals=Object.values(data.goals);
-      for(const g of goals){state.goals.push(g);await dbPut('goals',g)}
-      if(goals.length>0)restored=true;
-      console.log('[Restore] '+goals.length+' goals from Firebase');
-    }
-    if(data.settings&&data.settings.program&&!(await dbGet('settings','program'))){
-      state.program={...JSON.parse(JSON.stringify(DEFAULT_PROGRAM)),...data.settings.program};
-      await dbPut('settings',state.program);restored=true;
-    }
-    if(data.settings&&data.settings.defaultRestTime){
-      state.defaultRestTime=data.settings.defaultRestTime;
-      await dbPut('settings',{key:'defaultRestTime',value:data.settings.defaultRestTime});
-    }
-
-    return restored;
-  }catch(e){
-    console.warn('[Restore] Failed:',e);
-    return false;
-  }
-}
-
-// ============================================================
 // INIT
 // ============================================================
 async function seedProgramTemplates(){
@@ -2002,19 +1908,6 @@ async function initApp(){
 
   // Restore an in-progress session (survives reloads and crashes)
   await restoreSession();
-
-  // Init Firebase, then restore from cloud if local is empty, or backup if local has data
-  initFirebase();
-  if(fbDb){
-    const hasLocalData=state.workouts.length>0;
-    if(!hasLocalData){
-      restoreFromFirebase().then(restored=>{
-        if(restored)render();
-      });
-    }else{
-      backupToFirebase();
-    }
-  }
 
   render();
 }

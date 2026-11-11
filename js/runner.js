@@ -399,7 +399,7 @@ async function finishProgramSession(){
   state.workouts=state.workouts.filter(w=>w.id!==workout.id);
   state.workouts.push(workout);
   await dbPut('workouts',workout);
-  backupToFirebase();
+  queueMacSync();
   state.session=null;state.subPage=null;state._sheet=null;state.tab='today';
   clearInterval(runTick);runTick=null;releaseWakeLock();
   await dbDelete('activeSession','current');
